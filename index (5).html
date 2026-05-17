@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Shadow Boxing</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;font-family:'Courier New',monospace;color:#e0e0e0;height:100vh;overflow:hidden;user-select:none}
+
+/* ── CAMERA ── */
+#cam-layer{position:fixed;inset:0;z-index:0}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.45}
+#overlay-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#scanlines{position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.13) 3px,rgba(0,0,0,.13) 4px)}
+#vignette{position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 28%,rgba(0,0,0,.92) 100%)}
+
+/* ── UI ── */
+#ui{position:fixed;inset:0;z-index:10}
+.hdr{display:flex;justify-content:space-between;align-items:center;padding:0 22px;height:58px;
+  background:rgba(0,0,0,.8);backdrop-filter:blur(10px);border-bottom:1px solid rgba(255,255,255,.05)}
+.logo{font-size:10px;letter-spacing:6px;color:#00ff88}
+.rnd-badge{margin-left:12px;background:#00ff8812;border:1px solid #00ff8838;border-radius:3px;
+  padding:3px 10px;font-size:10px;color:#00ff88;letter-spacing:3px}
+.timer{font-size:44px;font-weight:900;letter-spacing:4px;font-variant-numeric:tabular-nums;color:#fff;transition:color .3s}
+.timer.warn{color:#ff4444;text-shadow:0 0 18px #ff4444}
+.phdr{text-align:right}
+.phdr-n{font-size:25px;font-weight:900;color:#00ff88}
+.phdr-l{font-size:9px;color:#2a2a2a;letter-spacing:3px}
+
+.body{display:grid;grid-template-columns:178px 1fr 206px;height:calc(100vh - 63px)}
+.sb{padding:13px 12px;background:rgba(0,0,0,.74);backdrop-filter:blur(8px);
+  display:flex;flex-direction:column;gap:7px;border-right:1px solid rgba(255,255,255,.04)}
+.sb-r{border-right:none;border-left:1px solid rgba(255,255,255,.04)}
+.sb-t{font-size:9px;color:#222;letter-spacing:4px;margin-bottom:2px}
+.srow{display:flex;justify-content:space-between;align-items:center}
+.slbl{font-size:11px;color:#333;letter-spacing:.5px}
+.sval{font-size:20px;font-weight:700;color:#555;min-width:28px;text-align:right;transition:color .15s,text-shadow .15s}
+.sval.hot{color:#fff;text-shadow:0 0 10px rgba(255,255,255,.3)}
+.dv{border-top:1px solid #0d0d0d;margin:3px 0}
+.combo-big{font-size:34px;font-weight:900;color:#a855f7;text-shadow:0 0 18px #a855f755}
+
+.prog-track{background:#080808;height:5px}
+.prog-fill{height:100%;transition:width 1s linear,background .3s;background:#00ff88}
+
+/* Hand boxes */
+.hbox{border:1px solid #111;border-radius:4px;padding:8px 10px;background:rgba(255,255,255,.012);margin-bottom:3px}
+.hbox-t{font-size:9px;letter-spacing:3px;margin-bottom:6px}
+.vrow{display:flex;align-items:center;gap:5px;margin-bottom:3px}
+.vi{font-size:9px;width:14px;text-align:center}
+.vtr{flex:1;height:3px;background:#0d0d0d;border-radius:2px;overflow:hidden}
+.vfi{height:100%;border-radius:2px;transition:width .06s;width:0%}
+.last-chip{display:inline-block;border-radius:3px;padding:2px 7px;font-size:10px;
+  font-weight:700;letter-spacing:1px;margin-top:3px;min-height:18px}
+
+/* Direction indicator */
+.dir-indicator{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr 1fr;
+  width:52px;height:52px;gap:2px;margin-top:4px}
+.dir-cell{border-radius:2px;background:#0d0d0d;display:flex;align-items:center;justify-content:center;
+  font-size:9px;transition:background .1s,color .1s;color:#1a1a1a}
+.dir-cell.active{color:#fff}
+
+/* Center */
+.center{position:relative;display:flex;flex-direction:column;align-items:center;
+  justify-content:flex-start;padding-top:13px;gap:0}
+.callout{background:rgba(0,255,136,.08);border:1px solid #00ff8840;border-radius:4px;
+  padding:6px 16px;font-size:12px;color:#00ff88;letter-spacing:2px;transition:opacity .4s;white-space:nowrap}
+.tbox{background:rgba(255,60,60,.06);border:2px solid #ff444460;border-radius:5px;
+  padding:12px 18px;text-align:center;margin-top:10px}
+.tlbl{font-size:9px;color:#ff4444;letter-spacing:4px;margin-bottom:8px}
+.trow{display:flex;gap:7px;align-items:center;justify-content:center;flex-wrap:wrap}
+.pchip{border-radius:4px;padding:6px 11px;font-size:13px;font-weight:900;letter-spacing:1px}
+.tarr{color:#1a1a1a;font-size:12px}
+.trail{display:flex;gap:5px;align-items:center;margin-top:10px;min-height:30px;flex-wrap:wrap;justify-content:center}
+.tchip{border:1px solid #1a1a1a;border-radius:3px;padding:3px 8px;font-size:11px;font-weight:700}
+
+/* Flash */
+#flash{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  pointer-events:none;z-index:50;opacity:0;font-weight:900;white-space:nowrap;letter-spacing:2px}
+#flash.pop{animation:fp .5s ease-out forwards}
+@keyframes fp{0%{opacity:.95;transform:translate(-50%,-50%) scale(1.3)}100%{opacity:0;transform:translate(-50%,-50%) scale(.6)}}
+#ca{position:fixed;top:20%;left:50%;transform:translateX(-50%);font-size:40px;font-weight:900;
+  color:#fbbf24;text-shadow:0 0 28px #fbbf24;z-index:60;letter-spacing:5px;opacity:0;
+  pointer-events:none;white-space:nowrap}
+#ca.pop{animation:fp 1.5s ease-out forwards}
+
+/* Screens */
+.screen{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:24px;
+  background:rgba(0,0,0,.94);backdrop-filter:blur(14px)}
+.screen.h{display:none}
+.stag{font-size:10px;color:#252525;letter-spacing:6px}
+.sbig{font-size:56px;font-weight:900;letter-spacing:6px;line-height:1}
+.green{color:#00ff88;text-shadow:0 0 36px #00ff88}
+.blue{color:#00d4ff;text-shadow:0 0 28px #00d4ff}
+.amber{color:#fbbf24;text-shadow:0 0 28px #fbbf24}
+.btn{padding:14px 48px;font-size:13px;font-weight:900;letter-spacing:6px;background:transparent;
+  border:2px solid #00ff88;color:#00ff88;cursor:pointer;border-radius:4px;
+  font-family:'Courier New',monospace;transition:all .2s}
+.btn:hover{background:#00ff8818;box-shadow:0 0 28px #00ff8835}
+.btn-sm{border-color:#1a1a1a;color:#2a2a2a;border-width:1px;padding:8px 26px;font-size:11px;letter-spacing:3px}
+.rsel{display:flex;align-items:center;gap:13px}
+.rbtn{width:40px;height:40px;border:2px solid #121212;background:transparent;color:#222;
+  font-size:14px;font-weight:700;cursor:pointer;border-radius:4px;font-family:'Courier New',monospace;transition:all .2s}
+.rbtn.on{border-color:#00ff88;background:#00ff8816;color:#00ff88}
+.cbox{border:1px solid #141414;border-radius:5px;padding:16px 26px;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:9px;min-width:280px}
+
+/* Punch legend */
+.pleg{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px}
+.pleg-r{display:flex;align-items:flex-start;gap:8px}
+.pleg-k{width:22px;height:22px;border-radius:3px;display:flex;align-items:center;
+  justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;margin-top:1px}
+.pleg-name{font-size:10px;color:#777;margin-bottom:1px}
+.pleg-dir{font-size:9px;color:#252525;letter-spacing:.3px}
+
+/* Done */
+.dstats{display:flex;gap:32px}
+.dsbox{text-align:center}
+.dsn{font-size:46px;font-weight:900}
+.dsl{font-size:9px;color:#252525;letter-spacing:3px;margin-top:2px}
+.rpills{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.rpill{background:#0c0c0c;border:1px solid #141414;border-radius:4px;padding:8px 14px;text-align:center;min-width:65px}
+.rpn{font-size:9px;color:#252525;letter-spacing:2px;margin-bottom:3px}
+.rpv{font-size:20px;font-weight:700;color:#e0e0e0}
+
+/* Debug bar */
+#dbg{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:20;
+  background:rgba(0,0,0,.8);border:1px solid #111;border-radius:4px;
+  padding:5px 16px;font-size:10px;color:#222;letter-spacing:2px;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<div id="cam-layer">
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="overlay-canvas"></canvas>
+</div>
+<div id="scanlines"></div>
+<div id="vignette"></div>
+
+<!-- GAME UI -->
+<div id="ui" class="h">
+  <div class="hdr">
+    <div style="display:flex;align-items:center">
+      <span class="logo">AI SHADOW BOXING</span>
+      <span id="rnd-badge" class="rnd-badge">RND 1/3</span>
+    </div>
+    <div id="timer" class="timer">3:00</div>
+    <div class="phdr"><div id="total" class="phdr-n">0</div><div class="phdr-l">PUNCHES</div></div>
+  </div>
+
+  <div class="body">
+    <!-- LEFT: stats -->
+    <div class="sb">
+      <div class="sb-t">THIS ROUND</div>
+      <div class="srow"><span class="slbl">L. JAB</span><span id="s-lj" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">R. CROSS</span><span id="s-rc" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">L. HOOK</span><span id="s-lh" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">R. HOOK</span><span id="s-rh" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">L. UPPER</span><span id="s-lu" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">R. UPPER</span><span id="s-ru" class="sval">0</span></div>
+      <div class="dv"></div>
+      <div class="sb-t">COMBOS</div>
+      <div id="s-combos" class="combo-big">0</div>
+    </div>
+
+    <!-- CENTER -->
+    <div class="center">
+      <div id="callout" class="callout" style="opacity:0">🤖 Ready</div>
+      <div id="tbox" class="tbox" style="display:none">
+        <div class="tlbl">⚡ THROW THIS COMBO</div>
+        <div id="trow" class="trow"></div>
+      </div>
+      <div id="trail" class="trail"></div>
+    </div>
+
+    <!-- RIGHT: hand tracker -->
+    <div class="sb sb-r">
+      <div class="sb-t">HAND TRACKER</div>
+
+      <!-- Left hand box -->
+      <div class="hbox">
+        <div class="hbox-t" style="color:#00ff88">LEFT HAND</div>
+        <div class="vrow">
+          <span class="vi" style="color:#00ff8855">→</span>
+          <div class="vtr"><div id="lh-vx" class="vfi" style="background:#00ff88"></div></div>
+        </div>
+        <div class="vrow">
+          <span class="vi" style="color:#00ff8855">↑</span>
+          <div class="vtr"><div id="lh-vy" class="vfi" style="background:#00ff88"></div></div>
+        </div>
+        <!-- 3x3 direction grid for left hand -->
+        <div class="dir-indicator" id="lh-dir">
+          <div class="dir-cell" id="lh-UL">↖</div>
+          <div class="dir-cell" id="lh-U">↑</div>
+          <div class="dir-cell" id="lh-UR">↗</div>
+          <div class="dir-cell" id="lh-L">←</div>
+          <div class="dir-cell" id="lh-C">·</div>
+          <div class="dir-cell" id="lh-R">→</div>
+          <div class="dir-cell" id="lh-DL">↙</div>
+          <div class="dir-cell" id="lh-D">↓</div>
+          <div class="dir-cell" id="lh-DR">↘</div>
+        </div>
+        <div id="lh-last" style="min-height:20px"></div>
+      </div>
+
+      <!-- Right hand box -->
+      <div class="hbox">
+        <div class="hbox-t" style="color:#00d4ff">RIGHT HAND</div>
+        <div class="vrow">
+          <span class="vi" style="color:#00d4ff55">→</span>
+          <div class="vtr"><div id="rh-vx" class="vfi" style="background:#00d4ff"></div></div>
+        </div>
+        <div class="vrow">
+          <span class="vi" style="color:#00d4ff55">↑</span>
+          <div class="vtr"><div id="rh-vy" class="vfi" style="background:#00d4ff"></div></div>
+        </div>
+        <div class="dir-indicator" id="rh-dir">
+          <div class="dir-cell" id="rh-UL">↖</div>
+          <div class="dir-cell" id="rh-U">↑</div>
+          <div class="dir-cell" id="rh-UR">↗</div>
+          <div class="dir-cell" id="rh-L">←</div>
+          <div class="dir-cell" id="rh-C">·</div>
+          <div class="dir-cell" id="rh-R">→</div>
+          <div class="dir-cell" id="rh-DL">↙</div>
+          <div class="dir-cell" id="rh-D">↓</div>
+          <div class="dir-cell" id="rh-DR">↘</div>
+        </div>
+        <div id="rh-last" style="min-height:20px"></div>
+      </div>
+
+      <div class="dv"></div>
+      <div class="sb-t">PUNCH GUIDE</div>
+      <div style="font-size:9px;line-height:2.4;letter-spacing:.3px">
+        <span style="color:#00ff8855">L</span><span style="color:#1e1e1e"> fwd →→ </span><span style="color:#00ff88">JAB</span><br>
+        <span style="color:#00d4ff55">R</span><span style="color:#1e1e1e"> fwd ←← </span><span style="color:#00d4ff">CROSS</span><br>
+        <span style="color:#00ff8855">L</span><span style="color:#1e1e1e"> L→R sweep </span><span style="color:#ff6b35">L.HOOK</span><br>
+        <span style="color:#00d4ff55">R</span><span style="color:#1e1e1e"> R→L sweep </span><span style="color:#ff6b35">R.HOOK</span><br>
+        <span style="color:#00ff8855">L</span><span style="color:#1e1e1e"> up ↑↑ </span><span style="color:#a855f7">L.UPPER</span><br>
+        <span style="color:#00d4ff55">R</span><span style="color:#1e1e1e"> up ↑↑ </span><span style="color:#a855f7">R.UPPER</span>
+      </div>
+      <div class="dv"></div>
+      <div class="sb-t">KEYS</div>
+      <div style="font-size:9px;color:#1a1a1a;line-height:2.1">
+        1=L.JAB &nbsp;2=R.CROSS<br>3=L.HOOK 4=R.HOOK<br>5=L.UPP &nbsp;6=R.UPP
+      </div>
+    </div>
+  </div>
+
+  <div class="prog-track"><div id="prog-fill" class="prog-fill" style="width:100%"></div></div>
+</div>
+
+<div id="flash"></div>
+<div id="ca"></div>
+<div id="dbg">Loading...</div>
+
+<!-- ── MENU ── -->
+<div id="menu-screen" class="screen">
+  <div style="text-align:center">
+    <div class="stag" style="margin-bottom:12px">AI · MEDIAPIPE · HAND TRACKING</div>
+    <div class="sbig">SHADOW</div>
+    <div class="sbig green">BOXING</div>
+  </div>
+
+  <div id="cbox" class="cbox">
+    <div style="font-size:32px">🥊</div>
+    <div id="ctext" style="font-size:11px;letter-spacing:2px;color:#333">Connecting camera...</div>
+    <button id="cretry" class="btn btn-sm" style="display:none" onclick="initTracking()">RETRY CAMERA</button>
+  </div>
+
+  <div class="pleg">
+    <div class="pleg-r">
+      <div class="pleg-k" style="border:1.5px solid #00ff88;color:#00ff88">L</div>
+      <div><div class="pleg-name">LEFT JAB</div><div class="pleg-dir">Left hand straight forward</div></div>
+    </div>
+    <div class="pleg-r">
+      <div class="pleg-k" style="border:1.5px solid #00d4ff;color:#00d4ff">R</div>
+      <div><div class="pleg-name">RIGHT CROSS</div><div class="pleg-dir">Right hand straight forward</div></div>
+    </div>
+    <div class="pleg-r">
+      <div class="pleg-k" style="border:1.5px solid #ff6b35;color:#ff6b35">L</div>
+      <div><div class="pleg-name">LEFT HOOK</div><div class="pleg-dir">Left hand left → right sweep</div></div>
+    </div>
+    <div class="pleg-r">
+      <div class="pleg-k" style="border:1.5px solid #ff6b35;color:#ff6b35">R</div>
+      <div><div class="pleg-name">RIGHT HOOK</div><div class="pleg-dir">Right hand right → left sweep</div></div>
+    </div>
+    <div class="pleg-r">
+      <div class="pleg-k" style="border:1.5px solid #a855f7;color:#a855f7">L</div>
+      <div><div class="pleg-name">LEFT UPPER</div><div class="pleg-dir">Left hand upward ↑</div></div>
+    </div>
+    <div class="pleg-r">
+      <div class="pleg-k" style="border:1.5px solid #a855f7;color:#a855f7">R</div>
+      <div><div class="pleg-name">RIGHT UPPER</div><div class="pleg-dir">Right hand upward ↑</div></div>
+    </div>
+  </div>
+
+  <div class="rsel">
+    <div class="stag">ROUNDS:</div>
+    <div id="rbtns" style="display:flex;gap:8px"></div>
+  </div>
+  <button class="btn" onclick="startFight()">FIGHT</button>
+</div>
+
+<!-- REST -->
+<div id="rest-screen" class="screen h">
+  <div class="stag" id="rtitle">END OF ROUND 1</div>
+  <div class="sbig blue">REST</div>
+  <div id="rt" style="font-size:58px;font-weight:900;color:#fff">30</div>
+  <div class="stag" id="rnext">ROUND 2 COMING UP</div>
+  <button class="btn btn-sm" onclick="skipRest()">SKIP REST</button>
+</div>
+
+<!-- DONE -->
+<div id="done-screen" class="screen h">
+  <div class="stag">WORKOUT COMPLETE</div>
+  <div class="sbig amber">GG!</div>
+  <div class="dstats" id="dstats"></div>
+  <div id="drounds" class="rpills"></div>
+  <button class="btn" onclick="backMenu()">AGAIN</button>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  PUNCH TYPES
+// ═══════════════════════════════════════════════════════
+const PT = {
+  LJ: { label:'L. JAB',   color:'#00ff88', stat:'lj', sym:'→' },
+  RC: { label:'R. CROSS', color:'#00d4ff', stat:'rc', sym:'←' },
+  LH: { label:'L. HOOK',  color:'#ff6b35', stat:'lh', sym:'↺' },
+  RH: { label:'R. HOOK',  color:'#ff6b35', stat:'rh', sym:'↻' },
+  LU: { label:'L. UPPER', color:'#a855f7', stat:'lu', sym:'↑L' },
+  RU: { label:'R. UPPER', color:'#a855f7', stat:'ru', sym:'↑R' },
+};
+
+const COMBOS = [
+  { name:'Jab Cross',       keys:['LJ','RC'] },
+  { name:'1-2-3',           keys:['LJ','RC','LH'] },
+  { name:'Double Jab',      keys:['LJ','LJ'] },
+  { name:'Cross Hook',      keys:['RC','RH'] },
+  { name:'Uppercut Hook',   keys:['LU','LH'] },
+  { name:'Jab Cross Upper', keys:['LJ','RC','RU'] },
+  { name:'Full Combo',      keys:['LJ','RC','LH','RU'] },
+];
+
+const CALLOUTS = [
+  'Keep your guard up!','Faster combinations!','Nice punch!','More power!',
+  'Head movement!','Set up with the jab!','Breathe!','Snap those punches!',
+  'Work the body!','Stay light on your feet!','Beautiful combo!','Keep going!',
+];
+
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+let G = {
+  phase:'menu', round:1, totalRounds:3, timeLeft:180,
+  stats:{ lj:0, rc:0, lh:0, rh:0, lu:0, ru:0, total:0, combos:0 },
+  roundHistory:[], punchLog:[], trail:[],
+  timerInt:null, targetTO:null, calloutTO:null, comboResetTO:null, restInt:null,
+};
+
+// ═══════════════════════════════════════════════════════
+//  PUNCH DETECTION ENGINE
+//
+//  Core idea: for each hand, we keep a sliding window of
+//  wrist positions. We analyze the NET DISPLACEMENT over
+//  that window (not frame-to-frame) to determine direction.
+//  No speed gate — ANY deliberate motion in the correct
+//  direction registers as a punch.
+//
+//  We use a STATE MACHINE per hand:
+//    IDLE → MOVING (when displacement exceeds threshold)
+//         → COMMITTED (when direction is clear and stable)
+//         → RETURNED (when hand comes back — punch complete)
+//
+//  This prevents counting the same punch multiple times.
+// ═══════════════════════════════════════════════════════
+
+const video  = document.getElementById('video');
+const canvas = document.getElementById('overlay-canvas');
+const ctx    = canvas.getContext('2d');
+
+// Position history per hand — store raw MP coords (unmirrored)
+// Each sample: { x, y, t }
+const HIST_SIZE = 10;
+
+// Per-hand punch state machine
+function makePunchFSM(side) {
+  return {
+    side,
+    hist: [],           // position history
+    state: 'IDLE',      // IDLE | EXTENDING | RETURNING
+    startPos: null,     // wrist position at punch start
+    peakDisp: 0,        // maximum displacement seen
+    cooldownUntil: 0,   // timestamp until next punch allowed
+    lastDir: null,      // direction of last committed punch
+  };
+}
+
+const FSM = { L: makePunchFSM('L'), R: makePunchFSM('R') };
+
+// ── TUNING ─────────────────────────────────────────────
+// Displacement threshold to START considering a punch (normalized 0-1 units)
+const DISP_START    = 0.06;   // hand must move this much from start pos to count
+// Threshold to consider "returned" (back near start)
+const RETURN_THRESH = 0.04;
+// How dominant the primary axis must be vs secondary
+// Lower = more lenient, higher = stricter
+const AXIS_RATIO    = 1.4;    // primary axis must be > secondary * ratio
+// Cooldown between punches (ms) — just to prevent double-fire on same gesture
+const COOLDOWN_MS   = 380;
+
+// ── DIRECTION ANALYSIS ─────────────────────────────────
+// Returns { dx, dy } as NET displacement from start to current,
+// then classifies based on hand side + direction rules.
+//
+// COORDINATE SYSTEM (raw MediaPipe, unmirrored):
+//   x: 0 = left of camera frame, 1 = right
+//   y: 0 = top, 1 = bottom
+//
+// User faces camera (mirrored display):
+//   User's LEFT hand  → appears on the RIGHT side of raw frame → larger x in MP
+//   User's RIGHT hand → appears on the LEFT side of raw frame  → smaller x in MP
+//
+// PUNCH DIRECTIONS (in raw MP coords):
+//
+//   LEFT JAB (left hand straight forward toward camera center):
+//     Hand moves toward screen center → x DECREASES (moves left in raw frame)
+//     Dominant axis: x negative
+//
+//   RIGHT CROSS (right hand straight forward):
+//     Hand moves toward screen center → x INCREASES (moves right in raw frame)
+//     Dominant axis: x positive
+//
+//   LEFT HOOK (left hand sweeps left-to-right from user perspective):
+//     In raw frame this means the hand sweeps from right side toward left side → x DECREASES
+//     BUT this is the SAME direction as a jab in raw coords!
+//     RESOLUTION: we use y-component and arc shape. Hook has more lateral sweep
+//     (x motion) WITHOUT the return, and occurs more to the side.
+//     Simpler resolution: LEFT HOOK is detected when the left hand moves
+//     in the +x direction in RAW coords (from user's POV: their hand goes
+//     from left to right = in camera raw = from large-x area toward small-x → wait…
+//
+//     Let's be precise:
+//     User stands facing camera. Their LEFT hand is on the right side of the camera image.
+//     A LEFT HOOK means user's left arm swings from their left to their right.
+//     From the camera's perspective (raw, unmirrored): the wrist moves from RIGHT to LEFT.
+//     → dx < 0 (decreasing x) — SAME as jab!
+//
+//     DISAMBIGUATION JAB vs LEFT HOOK:
+//       JAB: motion is more directly inward (toward camera center, less lateral y-variation)
+//            The hand extends and comes back in roughly same plane.
+//       HOOK: motion has a LATERAL + SLIGHTLY UPWARD arc.
+//              The key difference in 2D camera: hook has significant y component (upward arc)
+//              combined with lateral motion, while jab is more purely lateral.
+//
+//     Better approach: use the ANGLE of displacement.
+//       Pure horizontal (small |dy|/|dx|) → JAB or CROSS (straight punches)
+//       Diagonal with upward component     → HOOK (arcing motion)
+//       Strongly upward                    → UPPERCUT
+//
+//   RIGHT HOOK (right hand sweeps right-to-left from user perspective):
+//     In raw camera: wrist moves from LEFT side to RIGHT side → x INCREASES.
+//     dx > 0 — SAME direction as CROSS in raw coords!
+//     DISAMBIGUATION: same logic — hook has arc (y component), cross is straight.
+//
+// FINAL CLASSIFICATION LOGIC:
+//   For each hand, compute angle of net displacement vector.
+//   Classify by angle + hand side:
+//
+//   angle = atan2(-dy, dx)  [note: -dy because y=0 is top, so upward = -dy]
+//   angle in degrees from horizontal:
+//
+//   LEFT HAND (side='L'):
+//     dx < 0 (moving left in raw = toward center for left hand)
+//     |dy| small → LEFT JAB        (horizontal inward)
+//     dy < 0 (moving up) + |dx| moderate → LEFT HOOK   (inward + arcing up)
+//     dy < 0 (moving up) strongly          → LEFT UPPER (upward)
+//
+//   RIGHT HAND (side='R'):
+//     dx > 0 (moving right in raw = toward center for right hand)
+//     |dy| small → RIGHT CROSS      (horizontal inward)
+//     dy < 0 (moving up) + |dx| moderate → RIGHT HOOK  (inward + arcing up)
+//     dy < 0 (moving up) strongly          → RIGHT UPPER
+//
+// ANGLE ZONES (angle from +x axis, CCW positive):
+//   0°  = pure right
+//   90° = pure up
+//   180° = pure left
+//
+//   LEFT HAND (expects leftward = 180° or rightward hook = 0°):
+//     UPPER:   angle > 60° and < 120° and dy < 0  (near 90°, upward)
+//     JAB:     dx < 0 and |angle - 180°| < 35°    (nearly straight left)
+//     HOOK:    dx < 0 and angle between 120°-170°  (left + upward arc)
+//              OR dx < 0 and dy < 0 with roughly equal components
+//
+//   RIGHT HAND (expects rightward = 0° or leftward hook = 180°):
+//     UPPER:   angle > 60° and < 120° and dy < 0
+//     CROSS:   dx > 0 and |angle| < 35°             (nearly straight right)
+//     HOOK:    dx > 0 and angle between 10°-60°      (right + upward arc)
+
+function classifyPunch(side, dx, dy) {
+  // dy in MP coords: negative = UPWARD
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+
+  if (side === 'L') {
+    // UPPERCUT: strongly upward regardless of x
+    if (dy < 0 && absDy > absDx * AXIS_RATIO) return 'LU';
+    // JAB: moving inward (dx < 0 in raw = toward center), mostly horizontal
+    if (dx < 0 && absDx > absDy * AXIS_RATIO) return 'LJ';
+    // HOOK: moving inward (dx < 0) with significant upward arc
+    if (dx < 0 && absDy > 0 && absDx > 0) return 'LH';
+    // Hook sweeping outward (less common but valid): dx > 0 for left hand = outward arc
+    if (dx > 0 && absDx > absDy * 0.8) return 'LH';
+  } else {
+    // UPPERCUT: strongly upward
+    if (dy < 0 && absDy > absDx * AXIS_RATIO) return 'RU';
+    // CROSS: moving inward (dx > 0 in raw = toward center for right hand), mostly horizontal
+    if (dx > 0 && absDx > absDy * AXIS_RATIO) return 'RC';
+    // HOOK: moving inward (dx > 0) with significant upward arc
+    if (dx > 0 && absDy > 0 && absDx > 0) return 'RH';
+    // Hook sweeping: dx < 0 for right hand = outward arc
+    if (dx < 0 && absDx > absDy * 0.8) return 'RH';
+  }
+  return null;
+}
+
+// ── FSM UPDATE (called every frame per hand) ──────────
+function updateFSM(fsm, x, y, now) {
+  const hist = fsm.hist;
+  hist.push({ x, y, t: now });
+  if (hist.length > HIST_SIZE) hist.shift();
+  if (hist.length < 3) return;
+
+  if (now < fsm.cooldownUntil) return;
+
+  switch (fsm.state) {
+    case 'IDLE': {
+      // Look for the beginning of a motion
+      // Use median of last 3 frames as stable "start"
+      if (!fsm.startPos) {
+        fsm.startPos = { x, y };
+        break;
+      }
+      const dx = x - fsm.startPos.x;
+      const dy = y - fsm.startPos.y;
+      const disp = Math.sqrt(dx*dx + dy*dy);
+      if (disp > DISP_START) {
+        fsm.state = 'EXTENDING';
+        fsm.peakDisp = disp;
+        fsm.extendDir = { dx, dy };
+        setDir(fsm.side, dx, dy);
+      }
+      break;
+    }
+    case 'EXTENDING': {
+      const dx = x - fsm.startPos.x;
+      const dy = y - fsm.startPos.y;
+      const disp = Math.sqrt(dx*dx + dy*dy);
+      setDir(fsm.side, dx, dy);
+      if (disp > fsm.peakDisp) {
+        fsm.peakDisp = disp;
+        fsm.extendDir = { dx, dy };
+      }
+      // Check if hand is returning (displacement dropping significantly)
+      if (disp < fsm.peakDisp * 0.55 && fsm.peakDisp > DISP_START) {
+        // PUNCH COMMITTED — classify based on peak direction
+        const punch = classifyPunch(fsm.side, fsm.extendDir.dx, fsm.extendDir.dy);
+        if (punch) {
+          registerPunch(punch, true);
+          fsm.cooldownUntil = now + COOLDOWN_MS;
+        }
+        fsm.state = 'RETURNING';
+      }
+      break;
+    }
+    case 'RETURNING': {
+      const dx = x - fsm.startPos.x;
+      const dy = y - fsm.startPos.y;
+      const disp = Math.sqrt(dx*dx + dy*dy);
+      setDir(fsm.side, dx, dy);
+      // Wait until hand is back near start
+      if (disp < RETURN_THRESH) {
+        fsm.state = 'IDLE';
+        fsm.startPos = { x, y };
+        fsm.peakDisp = 0;
+        clearDir(fsm.side);
+      }
+      break;
+    }
+  }
+}
+
+// ── DIRECTION INDICATOR ───────────────────────────────
+const DIR_CELLS = ['UL','U','UR','L','C','R','DL','D','DR'];
+function clearDir(side) {
+  DIR_CELLS.forEach(d => {
+    const el = document.getElementById(`${side==='L'?'lh':'rh'}-${d}`);
+    if (el) { el.classList.remove('active'); el.style.background='#0d0d0d'; el.style.color='#1a1a1a'; }
+  });
+}
+function setDir(side, dx, dy) {
+  clearDir(side);
+  const p = side === 'L' ? 'lh' : 'rh';
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+  let cell = 'C';
+  if (absDx < 0.02 && absDy < 0.02) { cell='C'; }
+  else {
+    const angle = Math.atan2(-dy, dx) * 180 / Math.PI; // -dy because y=0 is top
+    if      (angle >  67.5 && angle <= 112.5) cell='U';
+    else if (angle > 112.5 && angle <= 157.5) cell='UL';
+    else if (angle > 157.5 || angle <=-157.5) cell='L';
+    else if (angle >=-157.5&& angle <=-112.5) cell='DL';
+    else if (angle >=-112.5&& angle <= -67.5) cell='D';
+    else if (angle >  -67.5&& angle <=  -22.5)cell='DR';
+    else if (angle >  -22.5&& angle <=   22.5)cell='R';
+    else if (angle >   22.5&& angle <=   67.5)cell='UR';
+  }
+  const el = document.getElementById(`${p}-${cell}`);
+  if (el) { el.classList.add('active'); el.style.background='#1e1e1e'; el.style.color='#fff'; }
+  // Update velocity bars
+  const scale = 250;
+  document.getElementById(`${p}-vx`).style.width = Math.min(100, absDx*scale)+'%';
+  document.getElementById(`${p}-vy`).style.width = Math.min(100, absDy*scale)+'%';
+}
+
+// ═══════════════════════════════════════════════════════
+//  MEDIAPIPE INIT
+// ═══════════════════════════════════════════════════════
+async function initTracking() {
+  setCT('Requesting camera…', '#444');
+  $('cretry').style.display = 'none';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:{ideal:1280}, height:{ideal:720}, facingMode:'user' }, audio:false
+    });
+    video.srcObject = stream;
+    await new Promise(r => { video.onloadedmetadata = r; });
+    video.play();
+    canvas.width  = video.videoWidth  || 1280;
+    canvas.height = video.videoHeight || 720;
+    setCT('Loading AI hand model…', '#444');
+    dbg('Loading MediaPipe Hands…');
+
+    const hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.70,
+      minTrackingConfidence: 0.60,
+    });
+    hands.onResults(onResults);
+
+    const cam = new Camera(video, {
+      onFrame: async () => { await hands.send({ image: video }); },
+      width: 640, height: 480,
+    });
+    await cam.start();
+    setCT('✓ Hand tracking active — step back so both hands are visible', '#00ff88');
+    dbg('📷 MEDIAPIPE HANDS ACTIVE · Waiting for punches…');
+  } catch(e) {
+    setCT('Camera denied — use keys 1-6', '#ff4444');
+    $('cretry').style.display = 'block';
+    dbg('⌨ KEYBOARD · 1=L.JAB  2=R.CROSS  3=L.HOOK  4=R.HOOK  5=L.UPPER  6=R.UPPER');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  MEDIAPIPE RESULTS
+// ═══════════════════════════════════════════════════════
+const CONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+
+function onResults(res) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  // Mirror canvas to match mirrored video display
+  ctx.translate(canvas.width, 0);
+  ctx.scale(-1, 1);
+
+  const W = canvas.width, H = canvas.height;
+  const now = Date.now();
+
+  if (res.multiHandLandmarks && res.multiHandLandmarks.length) {
+    res.multiHandLandmarks.forEach((lms, i) => {
+      // MediaPipe labels from its own (unmirrored camera) view:
+      //   "Left" in MP  = user's RIGHT hand
+      //   "Right" in MP = user's LEFT hand
+      const mpLabel = res.multiHandedness[i].label;
+      const side    = mpLabel === 'Left' ? 'R' : 'L';
+      const col     = side === 'L' ? '#00ff88' : '#00d4ff';
+
+      drawHand(lms, col, W, H);
+
+      // Feed wrist (landmark 0) raw MP coords into FSM
+      updateFSM(FSM[side], lms[0].x, lms[0].y, now);
+
+      // Update last-punch chip color based on state
+      const stateColors = { IDLE:'#1a1a1a', EXTENDING: col+'88', RETURNING:'#44444488' };
+      const stateEl = $(side==='L'?'lh-last':'rh-last');
+      if (FSM[side].state === 'IDLE' && !stateEl.querySelector('.last-chip')) {
+        // leave as is
+      }
+    });
+  } else {
+    // No hands detected — reset FSMs
+    FSM.L.state = 'IDLE'; FSM.L.startPos = null; clearDir('L');
+    FSM.R.state = 'IDLE'; FSM.R.startPos = null; clearDir('R');
+  }
+
+  ctx.restore();
+}
+
+function drawHand(lms, col, W, H) {
+  ctx.strokeStyle = col + '60';
+  ctx.lineWidth = 2;
+  for (const [a,b] of CONN) {
+    ctx.beginPath();
+    ctx.moveTo(lms[a].x*W, lms[a].y*H);
+    ctx.lineTo(lms[b].x*W, lms[b].y*H);
+    ctx.stroke();
+  }
+  [4,8,12,16,20].forEach(i => {
+    ctx.beginPath();
+    ctx.arc(lms[i].x*W, lms[i].y*H, 5, 0, Math.PI*2);
+    ctx.fillStyle = col;
+    ctx.fill();
+  });
+  // Wrist
+  ctx.beginPath();
+  ctx.arc(lms[0].x*W, lms[0].y*H, 9, 0, Math.PI*2);
+  ctx.fillStyle = col+'40';
+  ctx.fill();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+// ═══════════════════════════════════════════════════════
+//  ROUND BUTTONS
+// ═══════════════════════════════════════════════════════
+const rw = $('rbtns');
+[1,2,3,4,5,6].forEach(n => {
+  const b = document.createElement('button');
+  b.className = 'rbtn' + (n===3?' on':'');
+  b.textContent = n;
+  b.onclick = () => {
+    G.totalRounds = n;
+    rw.querySelectorAll('.rbtn').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+  };
+  rw.appendChild(b);
+});
+
+// ═══════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════
+function $(id) { return document.getElementById(id); }
+const fmt = s => Math.floor(s/60)+':'+(''+(s%60)).padStart(2,'0');
+const rndEl = arr => arr[Math.floor(Math.random()*arr.length)];
+function setCT(t,c){const e=$('ctext');e.textContent=t;e.style.color=c||'#444';}
+function dbg(t){$('dbg').textContent=t;}
+
+function showScreen(id){
+  ['menu','rest','done'].forEach(s=>$(s+'-screen').classList.add('h'));
+  $('ui').classList.add('h');
+  if(id==='fight'){$('ui').classList.remove('h');}
+  else{$(id+'-screen').classList.remove('h');}
+}
+
+// ═══════════════════════════════════════════════════════
+//  FLASH + COMBO ANNOUNCE
+// ═══════════════════════════════════════════════════════
+function flashPunch(key) {
+  const p = PT[key];
+  const el = $('flash');
+  el.textContent = p.sym + '  ' + p.label;
+  el.style.color = p.color;
+  el.style.fontSize = '56px';
+  el.style.textShadow = `0 0 32px ${p.color}`;
+  el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+}
+function announceCombo(name) {
+  const el = $('ca');
+  el.textContent = name.toUpperCase() + '!';
+  el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+}
+
+// ═══════════════════════════════════════════════════════
+//  CALLOUT + TARGET
+// ═══════════════════════════════════════════════════════
+function showCallout(msg) {
+  const el = $('callout');
+  el.textContent = '🤖 ' + msg; el.style.opacity = '1';
+  clearTimeout(G.calloutTO);
+  G.calloutTO = setTimeout(() => { el.style.opacity = '0'; }, 2500);
+}
+function scheduleTarget() {
+  clearTimeout(G.targetTO);
+  G.targetTO = setTimeout(() => {
+    const pool = Object.keys(PT);
+    const count = Math.floor(Math.random()*3)+1;
+    const combo = Array.from({length:count}, () => pool[Math.floor(Math.random()*pool.length)]);
+    showTarget(combo);
+    showCallout(rndEl(CALLOUTS));
+    G.targetTO = setTimeout(() => { hideTarget(); scheduleTarget(); }, 4000);
+  }, 2500 + Math.random()*4000);
+}
+function showTarget(keys) {
+  $('tbox').style.display = 'block';
+  $('trow').innerHTML = keys.map((k,i) => {
+    const p = PT[k]; if(!p) return '';
+    const c = `<div class="pchip" style="background:${p.color}14;border:1.5px solid ${p.color};color:${p.color}">${p.label}</div>`;
+    return i < keys.length-1 ? c+'<div class="tarr">→</div>' : c;
+  }).join('');
+}
+function hideTarget() { $('tbox').style.display = 'none'; }
+
+// ═══════════════════════════════════════════════════════
+//  PUNCH REGISTRATION
+// ═══════════════════════════════════════════════════════
+function registerPunch(key, fromCam=false) {
+  if (G.phase !== 'fighting') return;
+  const p = PT[key]; if (!p) return;
+
+  flashPunch(key);
+  G.stats.total++;
+  G.stats[p.stat]++;
+
+  G.punchLog.push(key);
+  G.trail.push(key);
+  if (G.trail.length > 4) G.trail = G.trail.slice(-4);
+
+  $('trail').innerHTML = G.trail.map(k => {
+    const pt = PT[k];
+    return `<div class="tchip" style="border-color:${pt.color};color:${pt.color}">${pt.label}</div>`;
+  }).join('');
+
+  clearTimeout(G.comboResetTO);
+  G.comboResetTO = setTimeout(() => { G.trail = []; $('trail').innerHTML = ''; }, 1800);
+
+  // Update last-punch chip per hand
+  const side = key.startsWith('L') ? 'lh' : 'rh';
+  $(side+'-last').innerHTML = `<span class="last-chip" style="background:${p.color}16;border:1px solid ${p.color};color:${p.color}">${p.label}</span>`;
+
+  updateStats();
+  checkCombos();
+  dbg(`${fromCam?'📷 CAM':'⌨ KEY'} · ${p.label} · total: ${G.stats.total} · state: ${FSM[key.startsWith('L')?'L':'R'].state}`);
+}
+
+function checkCombos() {
+  const recent = G.punchLog.slice(-4);
+  for (const c of COMBOS) {
+    if (c.keys.length <= recent.length) {
+      const tail = recent.slice(-c.keys.length);
+      if (JSON.stringify(tail) === JSON.stringify(c.keys)) {
+        G.stats.combos++;
+        $('s-combos').textContent = G.stats.combos;
+        announceCombo(c.name);
+        break;
+      }
+    }
+  }
+}
+
+function updateStats() {
+  ['lj','rc','lh','rh','lu','ru'].forEach(k => {
+    const el = $('s-'+k);
+    el.textContent = G.stats[k];
+    el.className = 'sval' + (G.stats[k] > 0 ? ' hot' : '');
+  });
+  $('total').textContent = G.stats.total;
+}
+
+// ═══════════════════════════════════════════════════════
+//  TIMER
+// ═══════════════════════════════════════════════════════
+function startTimer() {
+  clearInterval(G.timerInt);
+  G.timerInt = setInterval(() => {
+    G.timeLeft--;
+    const el = $('timer');
+    el.textContent = fmt(G.timeLeft);
+    el.classList.toggle('warn', G.timeLeft <= 30);
+    $('prog-fill').style.width = (G.timeLeft/180*100)+'%';
+    $('prog-fill').style.background = G.timeLeft <= 30 ? '#ff4444' : '#00ff88';
+    if (G.timeLeft <= 0) { clearInterval(G.timerInt); endRound(); }
+  }, 1000);
+}
+
+// ═══════════════════════════════════════════════════════
+//  FIGHT FLOW
+// ═══════════════════════════════════════════════════════
+function startFight() { G.round=1; G.roundHistory=[]; beginRound(); }
+
+function beginRound() {
+  G.phase='fighting'; G.timeLeft=180;
+  G.stats={lj:0,rc:0,lh:0,rh:0,lu:0,ru:0,total:0,combos:0};
+  G.punchLog=[]; G.trail=[];
+  // Reset FSMs
+  FSM.L = makePunchFSM('L'); FSM.R = makePunchFSM('R');
+
+  $('rnd-badge').textContent = 'RND '+G.round+'/'+G.totalRounds;
+  $('timer').textContent = '3:00'; $('timer').classList.remove('warn');
+  $('prog-fill').style.width='100%'; $('prog-fill').style.background='#00ff88';
+  $('lh-last').innerHTML=''; $('rh-last').innerHTML='';
+  updateStats(); $('trail').innerHTML=''; hideTarget();
+  clearDir('L'); clearDir('R');
+
+  showScreen('fight');
+  startTimer();
+  scheduleTarget();
+  showCallout('Round '+G.round+' — FIGHT!');
+  dbg('📷 Round '+G.round+' started · Punch to begin!');
+}
+
+function endRound() {
+  clearTimeout(G.targetTO); hideTarget();
+  G.roundHistory.push({ round:G.round, stats:{...G.stats} });
+  G.phase = 'rest';
+  if (G.round >= G.totalRounds) showDone(); else startRest();
+}
+
+function startRest() {
+  let t=30;
+  $('rtitle').textContent = 'END OF ROUND '+G.round;
+  $('rnext').textContent = 'ROUND '+(G.round+1)+' COMING UP';
+  $('rt').textContent = t;
+  showScreen('rest');
+  G.restInt = setInterval(() => {
+    t--; $('rt').textContent=t;
+    if (t<=0){clearInterval(G.restInt);nextRound();}
+  },1000);
+}
+function skipRest(){clearInterval(G.restInt);nextRound();}
+function nextRound(){G.round++;beginRound();}
+
+function showDone() {
+  const grand={total:0,combos:0};
+  G.roundHistory.forEach(r=>{grand.total+=r.stats.total;grand.combos+=r.stats.combos;});
+  $('dstats').innerHTML=
+    `<div class="dsbox"><div class="dsn green">${grand.total}</div><div class="dsl">TOTAL PUNCHES</div></div>`+
+    `<div class="dsbox"><div class="dsn" style="color:#a855f7">${grand.combos}</div><div class="dsl">COMBOS</div></div>`+
+    `<div class="dsbox"><div class="dsn blue">${G.totalRounds}</div><div class="dsl">ROUNDS</div></div>`;
+  $('drounds').innerHTML = G.roundHistory.map(r=>
+    `<div class="rpill"><div class="rpn">RND ${r.round}</div><div class="rpv">${r.stats.total}</div></div>`
+  ).join('');
+  showDone_screen();
+}
+function showDone_screen(){showScreen('done');}
+function backMenu(){clearInterval(G.timerInt);clearTimeout(G.targetTO);G.phase='menu';showScreen('menu');}
+
+// ═══════════════════════════════════════════════════════
+//  KEYBOARD FALLBACK (1-6)
+// ═══════════════════════════════════════════════════════
+const KMAP={'1':'LJ','2':'RC','3':'LH','4':'RH','5':'LU','6':'RU'};
+document.addEventListener('keydown', e => {
+  if (G.phase !== 'fighting') return;
+  const p = KMAP[e.key]; if(p){e.preventDefault();registerPunch(p,false);}
+});
+
+// ═══════════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════════
+showScreen('menu');
+$('dbg').textContent = 'Connecting to camera…';
+initTracking();
+</script>
+</body>
+</html>
