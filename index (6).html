@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Shadow Boxing</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;font-family:'Courier New',monospace;color:#e0e0e0;height:100vh;overflow:hidden;user-select:none}
+
+/* CAMERA */
+#cam-layer{position:fixed;inset:0;z-index:0}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.5}
+#overlay-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+/* Atmosphere */
+#vignette{position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 25%,rgba(0,0,0,.88) 100%)}
+
+/* UI LAYER */
+#ui{position:fixed;inset:0;z-index:10;pointer-events:none}
+#ui.active{pointer-events:auto}
+
+/* HEADER */
+.hdr{display:flex;justify-content:space-between;align-items:center;padding:0 20px;height:54px;
+  background:rgba(0,0,0,.82);backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(255,255,255,.05);pointer-events:auto}
+.logo{font-size:9px;letter-spacing:7px;color:#00ff88}
+.rnd-badge{margin-left:10px;background:#00ff8810;border:1px solid #00ff8830;
+  border-radius:3px;padding:3px 9px;font-size:9px;color:#00ff88;letter-spacing:3px}
+.timer-big{font-size:42px;font-weight:900;letter-spacing:4px;
+  font-variant-numeric:tabular-nums;color:#fff;transition:color .3s}
+.timer-big.warn{color:#ff4444;text-shadow:0 0 16px #ff4444}
+.phdr-n{font-size:24px;font-weight:900;color:#00ff88;text-align:right}
+.phdr-l{font-size:8px;color:#222;letter-spacing:3px;text-align:right}
+
+/* BODY GRID */
+.body{display:grid;grid-template-columns:160px 1fr 170px;height:calc(100vh - 59px)}
+
+/* SIDEBARS */
+.sb{padding:12px 11px;background:rgba(0,0,0,.76);backdrop-filter:blur(10px);
+  display:flex;flex-direction:column;gap:6px;pointer-events:auto}
+.sb-r{border-left:1px solid rgba(255,255,255,.04)}
+.sb-l{border-right:1px solid rgba(255,255,255,.04)}
+.sb-t{font-size:8px;color:#1e1e1e;letter-spacing:4px;margin-bottom:1px}
+.srow{display:flex;justify-content:space-between;align-items:center}
+.slbl{font-size:10px;color:#2e2e2e;letter-spacing:.5px}
+.sval{font-size:18px;font-weight:700;color:#444;min-width:26px;text-align:right;transition:color .12s}
+.sval.hot{color:#fff}
+.dv{border-top:1px solid #0d0d0d;margin:2px 0}
+.combo-big{font-size:30px;font-weight:900;color:#a855f7;text-shadow:0 0 16px #a855f750}
+
+/* Hand info */
+.hbox{border:1px solid #0e0e0e;border-radius:4px;padding:7px 9px;
+  background:rgba(255,255,255,.01);margin-bottom:3px}
+.hbox-t{font-size:8px;letter-spacing:3px;margin-bottom:5px}
+.vrow{display:flex;align-items:center;gap:4px;margin-bottom:2px}
+.vi{font-size:8px;width:12px;text-align:center}
+.vtr{flex:1;height:2px;background:#0c0c0c;border-radius:1px;overflow:hidden}
+.vfi{height:100%;border-radius:1px;transition:width .05s;width:0%}
+.state-dot{width:6px;height:6px;border-radius:50%;background:#111;
+  transition:background .15s;margin-top:4px}
+.state-dot.extend{background:#00ff88}
+.state-dot.return{background:#fbbf24}
+
+/* PROGRESS */
+.prog-track{background:#060606;height:4px}
+.prog-fill{height:100%;transition:width 1s linear,background .3s;background:#00ff88}
+
+/* FLASH */
+#flash{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  pointer-events:none;z-index:50;opacity:0;font-weight:900;white-space:nowrap;
+  letter-spacing:2px;font-size:52px}
+#flash.pop{animation:fp .5s ease-out forwards}
+@keyframes fp{0%{opacity:.92;transform:translate(-50%,-50%) scale(1.25)}
+              100%{opacity:0;transform:translate(-50%,-50%) scale(.55)}}
+
+/* COMBO ANNOUNCE */
+#ca{position:fixed;top:18%;left:50%;transform:translateX(-50%);
+  font-size:38px;font-weight:900;color:#fbbf24;text-shadow:0 0 26px #fbbf24;
+  z-index:60;letter-spacing:5px;opacity:0;pointer-events:none;white-space:nowrap}
+#ca.pop{animation:fp 1.5s ease-out forwards}
+
+/* ACCURACY badge */
+#acc-badge{position:fixed;top:70px;right:180px;z-index:20;
+  background:rgba(0,0,0,.7);border:1px solid #1a1a1a;border-radius:4px;
+  padding:5px 12px;font-size:10px;color:#333;letter-spacing:2px;
+  backdrop-filter:blur(5px);text-align:center}
+#acc-num{font-size:20px;font-weight:900;color:#fbbf24;display:block}
+
+/* CALLOUT banner — rendered in canvas, but keep a DOM version for AI tips */
+#callout-dom{position:fixed;top:66px;left:50%;transform:translateX(-50%);
+  z-index:20;background:rgba(0,255,136,.08);border:1px solid #00ff8838;
+  border-radius:4px;padding:6px 16px;font-size:11px;color:#00ff88;
+  letter-spacing:2px;white-space:nowrap;opacity:0;transition:opacity .4s;
+  pointer-events:none}
+
+/* DEBUG */
+#dbg{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:20;
+  background:rgba(0,0,0,.78);border:1px solid #0e0e0e;border-radius:3px;
+  padding:4px 14px;font-size:9px;color:#1e1e1e;letter-spacing:2px;white-space:nowrap}
+
+/* ── SCREENS ── */
+.screen{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:22px;
+  background:rgba(0,0,0,.94);backdrop-filter:blur(16px)}
+.screen.h{display:none}
+.stag{font-size:9px;color:#1e1e1e;letter-spacing:7px}
+.sbig{font-size:54px;font-weight:900;letter-spacing:6px;line-height:1}
+.green{color:#00ff88;text-shadow:0 0 34px #00ff88}
+.blue{color:#00d4ff;text-shadow:0 0 26px #00d4ff}
+.amber{color:#fbbf24;text-shadow:0 0 26px #fbbf24}
+.btn{padding:13px 46px;font-size:12px;font-weight:900;letter-spacing:6px;background:transparent;
+  border:2px solid #00ff88;color:#00ff88;cursor:pointer;border-radius:4px;
+  font-family:'Courier New',monospace;transition:all .2s}
+.btn:hover{background:#00ff8816;box-shadow:0 0 26px #00ff8832}
+.btn-sm{border-color:#181818;color:#282828;border-width:1px;padding:7px 24px;
+  font-size:10px;letter-spacing:3px}
+.rsel{display:flex;align-items:center;gap:12px}
+.rbtn{width:38px;height:38px;border:2px solid #101010;background:transparent;color:#1e1e1e;
+  font-size:13px;font-weight:700;cursor:pointer;border-radius:4px;
+  font-family:'Courier New',monospace;transition:all .2s}
+.rbtn.on{border-color:#00ff88;background:#00ff8812;color:#00ff88}
+
+/* cam box */
+.cbox{border:1px solid #141414;border-radius:5px;padding:14px 24px;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:8px;min-width:260px}
+
+/* punch legend grid */
+.pleg{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px}
+.pleg-r{display:flex;align-items:flex-start;gap:7px}
+.pleg-k{width:20px;height:20px;border-radius:3px;display:flex;align-items:center;
+  justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;margin-top:1px}
+.pleg-name{font-size:9px;color:#666;margin-bottom:1px}
+.pleg-dir{font-size:8px;color:#1e1e1e;letter-spacing:.2px}
+
+/* done */
+.dstats{display:flex;gap:28px}
+.dsbox{text-align:center}
+.dsn{font-size:44px;font-weight:900}
+.dsl{font-size:8px;color:#1e1e1e;letter-spacing:3px;margin-top:2px}
+.rpills{display:flex;gap:7px;flex-wrap:wrap;justify-content:center}
+.rpill{background:#0a0a0a;border:1px solid #121212;border-radius:3px;
+  padding:7px 12px;text-align:center;min-width:60px}
+.rpn{font-size:8px;color:#1e1e1e;letter-spacing:2px;margin-bottom:2px}
+.rpv{font-size:18px;font-weight:700;color:#d0d0d0}
+</style>
+</head>
+<body>
+
+<!-- CAMERA LAYER -->
+<div id="cam-layer">
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="overlay-canvas"></canvas>
+</div>
+<div id="vignette"></div>
+
+<!-- FLOATING ELEMENTS -->
+<div id="callout-dom"></div>
+<div id="acc-badge"><span id="acc-num">--%</span>ACC</div>
+<div id="flash"></div>
+<div id="ca"></div>
+<div id="dbg">Initializing...</div>
+
+<!-- GAME UI (sidebars only — center is the live canvas) -->
+<div id="ui">
+  <div class="hdr">
+    <div style="display:flex;align-items:center">
+      <span class="logo">AI SHADOW BOXING</span>
+      <span id="rnd-badge" class="rnd-badge">RND 1/3</span>
+    </div>
+    <div id="timer" class="timer-big">3:00</div>
+    <div>
+      <div id="total" class="phdr-n">0</div>
+      <div class="phdr-l">PUNCHES</div>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- LEFT: punch stats -->
+    <div class="sb sb-l">
+      <div class="sb-t">THIS ROUND</div>
+      <div class="srow"><span class="slbl">L. JAB</span><span id="s-lj" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">R. CROSS</span><span id="s-rc" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">L. HOOK</span><span id="s-lh" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">R. HOOK</span><span id="s-rh" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">L. UPPER</span><span id="s-lu" class="sval">0</span></div>
+      <div class="srow"><span class="slbl">R. UPPER</span><span id="s-ru" class="sval">0</span></div>
+      <div class="dv"></div>
+      <div class="sb-t">COMBOS HIT</div>
+      <div id="s-combos" class="combo-big">0</div>
+      <div class="dv"></div>
+      <div class="sb-t">ACCURACY</div>
+      <div id="sb-acc" style="font-size:26px;font-weight:900;color:#fbbf24">--%</div>
+    </div>
+
+    <!-- CENTER: empty — canvas renders here -->
+    <div style="position:relative"></div>
+
+    <!-- RIGHT: hand tracker -->
+    <div class="sb sb-r">
+      <div class="sb-t">HANDS</div>
+
+      <div class="hbox">
+        <div class="hbox-t" style="color:#00ff88">LEFT</div>
+        <div class="vrow">
+          <span class="vi" style="color:#00ff8855">H</span>
+          <div class="vtr"><div id="lh-vx" class="vfi" style="background:#00ff88"></div></div>
+        </div>
+        <div class="vrow">
+          <span class="vi" style="color:#00ff8555">V</span>
+          <div class="vtr"><div id="lh-vy" class="vfi" style="background:#00ff88"></div></div>
+        </div>
+        <div style="display:flex;gap:4px;margin-top:3px">
+          <div id="lh-dot" class="state-dot"></div>
+          <div id="lh-label" style="font-size:9px;color:#1e1e1e;margin-top:-1px;letter-spacing:1px">IDLE</div>
+        </div>
+        <div id="lh-last" style="min-height:16px;margin-top:3px"></div>
+      </div>
+
+      <div class="hbox">
+        <div class="hbox-t" style="color:#00d4ff">RIGHT</div>
+        <div class="vrow">
+          <span class="vi" style="color:#00d4ff55">H</span>
+          <div class="vtr"><div id="rh-vx" class="vfi" style="background:#00d4ff"></div></div>
+        </div>
+        <div class="vrow">
+          <span class="vi" style="color:#00d4ff55">V</span>
+          <div class="vtr"><div id="rh-vy" class="vfi" style="background:#00d4ff"></div></div>
+        </div>
+        <div style="display:flex;gap:4px;margin-top:3px">
+          <div id="rh-dot" class="state-dot"></div>
+          <div id="rh-label" style="font-size:9px;color:#1e1e1e;margin-top:-1px;letter-spacing:1px">IDLE</div>
+        </div>
+        <div id="rh-last" style="min-height:16px;margin-top:3px"></div>
+      </div>
+
+      <div class="dv"></div>
+      <div class="sb-t">PUNCH MAP</div>
+      <div style="font-size:8px;line-height:2.2;letter-spacing:.2px">
+        <span style="color:#00ff8840">L</span><span style="color:#161616"> fwd </span><span style="color:#00ff88">JAB</span><br>
+        <span style="color:#00d4ff40">R</span><span style="color:#161616"> fwd </span><span style="color:#00d4ff">CROSS</span><br>
+        <span style="color:#00ff8840">L</span><span style="color:#161616"> L→R </span><span style="color:#ff6b35">L.HOOK</span><br>
+        <span style="color:#00d4ff40">R</span><span style="color:#161616"> R→L </span><span style="color:#ff6b35">R.HOOK</span><br>
+        <span style="color:#00ff8840">L</span><span style="color:#161616"> up↑ </span><span style="color:#a855f7">L.UPP</span><br>
+        <span style="color:#00d4ff40">R</span><span style="color:#161616"> up↑ </span><span style="color:#a855f7">R.UPP</span>
+      </div>
+      <div class="dv"></div>
+      <div class="sb-t">KEYS 1-6</div>
+      <div style="font-size:8px;color:#141414;line-height:2">
+        1=L.JAB&nbsp;&nbsp;2=R.CROSS<br>3=L.HOOK 4=R.HOOK<br>5=L.UPP&nbsp;&nbsp;6=R.UPP
+      </div>
+    </div>
+  </div>
+
+  <div class="prog-track"><div id="prog-fill" class="prog-fill" style="width:100%"></div></div>
+</div>
+
+<!-- ═══ MENU ═══ -->
+<div id="menu-screen" class="screen">
+  <div style="text-align:center">
+    <div class="stag" style="margin-bottom:12px">AI · MEDIAPIPE · TARGET PUNCHING</div>
+    <div class="sbig">SHADOW</div>
+    <div class="sbig green">BOXING</div>
+  </div>
+  <div id="cbox" class="cbox">
+    <div style="font-size:30px">🥊</div>
+    <div id="ctext" style="font-size:10px;letter-spacing:2px;color:#333">Connecting camera...</div>
+    <button id="cretry" class="btn btn-sm" style="display:none" onclick="initTracking()">RETRY</button>
+  </div>
+  <div class="pleg">
+    <div class="pleg-r"><div class="pleg-k" style="border:1.5px solid #00ff88;color:#00ff88">L</div>
+      <div><div class="pleg-name">LEFT JAB</div><div class="pleg-dir">Left hand straight forward</div></div></div>
+    <div class="pleg-r"><div class="pleg-k" style="border:1.5px solid #00d4ff;color:#00d4ff">R</div>
+      <div><div class="pleg-name">RIGHT CROSS</div><div class="pleg-dir">Right hand straight forward</div></div></div>
+    <div class="pleg-r"><div class="pleg-k" style="border:1.5px solid #ff6b35;color:#ff6b35">L</div>
+      <div><div class="pleg-name">LEFT HOOK</div><div class="pleg-dir">Left hand left → right sweep</div></div></div>
+    <div class="pleg-r"><div class="pleg-k" style="border:1.5px solid #ff6b35;color:#ff6b35">R</div>
+      <div><div class="pleg-name">RIGHT HOOK</div><div class="pleg-dir">Right hand right → left sweep</div></div></div>
+    <div class="pleg-r"><div class="pleg-k" style="border:1.5px solid #a855f7;color:#a855f7">L</div>
+      <div><div class="pleg-name">LEFT UPPER</div><div class="pleg-dir">Left hand upward ↑</div></div></div>
+    <div class="pleg-r"><div class="pleg-k" style="border:1.5px solid #a855f7;color:#a855f7">R</div>
+      <div><div class="pleg-name">RIGHT UPPER</div><div class="pleg-dir">Right hand upward ↑</div></div></div>
+  </div>
+  <div class="rsel">
+    <div class="stag">ROUNDS:</div>
+    <div id="rbtns" style="display:flex;gap:7px"></div>
+  </div>
+  <button class="btn" onclick="startFight()">FIGHT</button>
+</div>
+
+<!-- REST -->
+<div id="rest-screen" class="screen h">
+  <div class="stag" id="rtitle">END OF ROUND 1</div>
+  <div class="sbig blue">REST</div>
+  <div id="rt" style="font-size:56px;font-weight:900;color:#fff">30</div>
+  <div class="stag" id="rnext">ROUND 2 COMING UP</div>
+  <button class="btn btn-sm" onclick="skipRest()">SKIP REST</button>
+</div>
+
+<!-- DONE -->
+<div id="done-screen" class="screen h">
+  <div class="stag">WORKOUT COMPLETE</div>
+  <div class="sbig amber">GG!</div>
+  <div class="dstats" id="dstats"></div>
+  <div id="drounds" class="rpills"></div>
+  <button class="btn" onclick="backMenu()">AGAIN</button>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  PUNCH TYPE DEFINITIONS
+// ══════════════════════════════════════════════════════════════════
+const PT = {
+  LJ:{ label:'L.JAB',   color:'#00ff88', stat:'lj', sym:'→', hand:'L' },
+  RC:{ label:'R.CROSS', color:'#00d4ff', stat:'rc', sym:'←', hand:'R' },
+  LH:{ label:'L.HOOK',  color:'#ff6b35', stat:'lh', sym:'↺', hand:'L' },
+  RH:{ label:'R.HOOK',  color:'#ff6b35', stat:'rh', sym:'↻', hand:'R' },
+  LU:{ label:'L.UPP',   color:'#a855f7', stat:'lu', sym:'↑', hand:'L' },
+  RU:{ label:'R.UPP',   color:'#a855f7', stat:'ru', sym:'↑', hand:'R' },
+};
+
+const COMBOS = [
+  {name:'Jab Cross',      keys:['LJ','RC']},
+  {name:'1-2-3',          keys:['LJ','RC','LH']},
+  {name:'Double Jab',     keys:['LJ','LJ']},
+  {name:'Cross Hook',     keys:['RC','RH']},
+  {name:'Uppercut Hook',  keys:['LU','LH']},
+  {name:'Jab Cross Upper',keys:['LJ','RC','RU']},
+  {name:'Full Combo',     keys:['LJ','RC','LH','RU']},
+];
+
+const CALLOUTS=[
+  'Keep your guard up!','Faster combos!','Nice punch!','More power!',
+  'Head movement!','Set up with the jab!','Breathe!','Snap it!',
+  'Work the body!','Stay light!','Beautiful!','Keep going!',
+];
+
+// ══════════════════════════════════════════════════════════════════
+//  GAME STATE
+// ══════════════════════════════════════════════════════════════════
+let G = {
+  phase:'menu', round:1, totalRounds:3, timeLeft:180,
+  stats:{lj:0,rc:0,lh:0,rh:0,lu:0,ru:0,total:0,combos:0,hits:0,misses:0},
+  roundHistory:[], punchLog:[], trail:[],
+  timerInt:null, targetTO:null, calloutTO:null, comboResetTO:null, restInt:null,
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  TARGET SYSTEM
+//  Each target: { id, x, y, r, punchType, born, life, state, alpha }
+//  x,y are in CANVAS pixels (screen space, after mirror)
+//  state: 'alive' | 'hit' | 'miss'
+// ══════════════════════════════════════════════════════════════════
+let targets = [];
+let targetIdCounter = 0;
+let lastTargetSpawn = 0;
+
+// Target zones mapped to punch types
+// We place targets where it makes sense for each punch:
+//   JAB/CROSS  → chest-head height, center-ish horizontally
+//   HOOK       → side of head
+//   UPPER      → chin height (low-center), coming upward
+// All positions in normalized 0-1 space (will be scaled to canvas)
+const TARGET_ZONES = {
+  LJ: [ // Left jab: target in front-right (user's right = screen left due to mirror)
+    {nx:0.35, ny:0.35}, {nx:0.30, ny:0.40}, {nx:0.32, ny:0.28},
+  ],
+  RC: [ // Right cross: target in front-left
+    {nx:0.65, ny:0.35}, {nx:0.70, ny:0.40}, {nx:0.68, ny:0.28},
+  ],
+  LH: [ // Left hook: target to the right (hooks come from left sweeping right)
+    {nx:0.72, ny:0.32}, {nx:0.75, ny:0.28}, {nx:0.78, ny:0.36},
+  ],
+  RH: [ // Right hook: target to the left
+    {nx:0.28, ny:0.32}, {nx:0.25, ny:0.28}, {nx:0.22, ny:0.36},
+  ],
+  LU: [ // Left uppercut: target low-center, punch goes up
+    {nx:0.38, ny:0.55}, {nx:0.35, ny:0.58}, {nx:0.40, ny:0.52},
+  ],
+  RU: [ // Right uppercut: target low-center
+    {nx:0.62, ny:0.55}, {nx:0.65, ny:0.58}, {nx:0.60, ny:0.52},
+  ],
+};
+
+// Spawn a target for a specific punch type
+function spawnTarget(punchType) {
+  const zones = TARGET_ZONES[punchType];
+  const zone  = zones[Math.floor(Math.random() * zones.length)];
+  // Add slight random jitter
+  const jitterX = (Math.random() - 0.5) * 0.06;
+  const jitterY = (Math.random() - 0.5) * 0.06;
+  const W = canvas.width, H = canvas.height;
+
+  targets.push({
+    id:       targetIdCounter++,
+    punchType,
+    x:        (zone.nx + jitterX) * W,
+    y:        (zone.ny + jitterY) * H,
+    r:        28,           // radius px
+    born:     Date.now(),
+    life:     3200,         // ms until auto-expire
+    state:    'alive',
+    alpha:    0,            // fade in
+    hitAlpha: 0,            // for hit animation
+    ripple:   0,            // expanding ring on hit
+    label:    PT[punchType].label,
+    color:    PT[punchType].color,
+  });
+}
+
+// Schedule a wave of targets based on current round
+function scheduleTargets() {
+  clearTimeout(G.targetTO);
+  if (G.phase !== 'fighting') return;
+
+  // Choose 1-3 punch types for this wave
+  const allTypes = Object.keys(PT);
+  const count = Math.floor(Math.random() * 2) + 1; // 1 or 2 targets at once
+  for (let i = 0; i < count; i++) {
+    const pt = allTypes[Math.floor(Math.random() * allTypes.length)];
+    spawnTarget(pt);
+  }
+
+  showCallout(CALLOUTS[Math.floor(Math.random() * CALLOUTS.length)]);
+
+  // Next wave after 2.2–4s
+  const delay = 2200 + Math.random() * 1800;
+  G.targetTO = setTimeout(scheduleTargets, delay);
+}
+
+// Check if a hand position hits any alive target
+// handX, handY in canvas pixel space (already mirrored)
+function checkTargetHit(handX, handY, punchType) {
+  let hit = false;
+  for (const t of targets) {
+    if (t.state !== 'alive') continue;
+    // Check distance
+    const dx = handX - t.x;
+    const dy = handY - t.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < t.r + 30) { // generous hit box
+      // Check punch type matches (or accept any for now — type match = bonus)
+      t.state = 'hit';
+      t.hitAlpha = 1;
+      t.ripple = 0;
+      G.stats.hits++;
+      hit = true;
+      updateAccuracy();
+    }
+  }
+  return hit;
+}
+
+// Update and draw all targets on canvas
+function drawTargets(now, W, H) {
+  // Remove dead targets that finished animating
+  targets = targets.filter(t => {
+    if (t.state === 'alive') return true;
+    if (t.state === 'hit')   return t.hitAlpha > 0.01;
+    if (t.state === 'miss')  return t.alpha > 0.01;
+    return false;
+  });
+
+  for (const t of targets) {
+    const age = now - t.born;
+
+    if (t.state === 'alive') {
+      // Fade in first 200ms
+      t.alpha = Math.min(1, age / 200);
+      // Pulse scale
+      const pulse = 1 + Math.sin(age / 280) * 0.06;
+      // Shrink as time runs out (last 800ms)
+      const timeLeft = t.life - age;
+      if (timeLeft < 0) {
+        // Expired — count as miss
+        t.state = 'miss';
+        G.stats.misses++;
+        updateAccuracy();
+        continue;
+      }
+      // Urgency: pulse faster and turn red as time runs out
+      const urgency = Math.max(0, 1 - timeLeft / t.life);
+      const urgencyColor = urgency > 0.6
+        ? lerpColor(t.color, '#ff4444', (urgency - 0.6) / 0.4)
+        : t.color;
+
+      ctx.save();
+      ctx.globalAlpha = t.alpha * 0.92;
+      ctx.translate(t.x, t.y);
+      ctx.scale(pulse, pulse);
+
+      // Outer glow ring
+      const grad = ctx.createRadialGradient(0,0,t.r*0.5, 0,0,t.r*1.8);
+      grad.addColorStop(0, urgencyColor + '40');
+      grad.addColorStop(1, 'transparent');
+      ctx.beginPath();
+      ctx.arc(0, 0, t.r * 1.8, 0, Math.PI*2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Main circle — dashed ring
+      ctx.beginPath();
+      ctx.arc(0, 0, t.r, 0, Math.PI*2);
+      ctx.strokeStyle = urgencyColor;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 4]);
+      ctx.lineDashOffset = -(age / 8); // rotate dash
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Inner solid circle
+      ctx.beginPath();
+      ctx.arc(0, 0, t.r * 0.55, 0, Math.PI*2);
+      ctx.fillStyle = urgencyColor + '30';
+      ctx.fill();
+      ctx.strokeStyle = urgencyColor + '80';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Center cross-hair
+      ctx.strokeStyle = urgencyColor + 'cc';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(-8,0); ctx.lineTo(8,0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,-8); ctx.lineTo(0,8); ctx.stroke();
+
+      // Label: punch type
+      ctx.fillStyle = urgencyColor;
+      ctx.font = 'bold 9px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText(t.label, 0, t.r + 14);
+
+      // Countdown arc
+      const frac = timeLeft / t.life;
+      ctx.beginPath();
+      ctx.arc(0, 0, t.r + 5, -Math.PI/2, -Math.PI/2 + frac * Math.PI*2);
+      ctx.strokeStyle = urgencyColor + '60';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.restore();
+
+    } else if (t.state === 'hit') {
+      // Hit explosion animation
+      t.hitAlpha *= 0.82;
+      t.ripple   += 4;
+
+      ctx.save();
+      ctx.globalAlpha = t.hitAlpha;
+      ctx.translate(t.x, t.y);
+
+      // Expanding ripple ring
+      ctx.beginPath();
+      ctx.arc(0, 0, t.r + t.ripple, 0, Math.PI*2);
+      ctx.strokeStyle = t.color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Burst lines
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const len = 12 + t.ripple * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(angle)*(t.r+4), Math.sin(angle)*(t.r+4));
+        ctx.lineTo(Math.cos(angle)*(t.r+len), Math.sin(angle)*(t.r+len));
+        ctx.strokeStyle = t.color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      // HIT text
+      ctx.fillStyle = t.color;
+      ctx.font = 'bold 14px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText('HIT!', 0, -t.r - 10);
+
+      ctx.restore();
+
+    } else if (t.state === 'miss') {
+      // Fade out with red X
+      t.alpha *= 0.88;
+      ctx.save();
+      ctx.globalAlpha = t.alpha * 0.5;
+      ctx.translate(t.x, t.y);
+      ctx.strokeStyle = '#ff444488';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-t.r*0.4,-t.r*0.4); ctx.lineTo(t.r*0.4,t.r*0.4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(t.r*0.4,-t.r*0.4); ctx.lineTo(-t.r*0.4,t.r*0.4); ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+// Color lerp helper
+function lerpColor(a, b, t) {
+  const ah = parseInt(a.slice(1),16);
+  const bh = parseInt(b.slice(1),16);
+  const ar = (ah>>16)&0xff, ag=(ah>>8)&0xff, ab=ah&0xff;
+  const br = (bh>>16)&0xff, bg=(bh>>8)&0xff, bb=bh&0xff;
+  const r = Math.round(ar+(br-ar)*t);
+  const g = Math.round(ag+(bg-ag)*t);
+  const bl2= Math.round(ab+(bb-ab)*t);
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl2.toString(16).padStart(2,'0')}`;
+}
+
+function updateAccuracy() {
+  const total = G.stats.hits + G.stats.misses;
+  const pct = total > 0 ? Math.round(G.stats.hits / total * 100) : null;
+  const str = pct !== null ? pct+'%' : '--%';
+  $('acc-num').textContent = str;
+  $('sb-acc').textContent  = str;
+  $('acc-num').style.color = pct >= 70 ? '#00ff88' : pct >= 40 ? '#fbbf24' : '#ff4444';
+  $('sb-acc').style.color  = $('acc-num').style.color;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  HAND TRACKING — EFFICIENT STATE MACHINE
+//
+//  Key improvements:
+//  1. No speed threshold — direction alone classifies punch
+//  2. Exponential moving average on position (noise reduction)
+//  3. Extend→Return state machine prevents duplicate fires
+//  4. Wrist position fed to target hit detection at peak extension
+// ══════════════════════════════════════════════════════════════════
+const video  = document.getElementById('video');
+const canvas = document.getElementById('overlay-canvas');
+const ctx    = canvas.getContext('2d');
+
+// Smoothed wrist positions (EMA)
+const EMA_ALPHA = 0.4; // lower = smoother but more lag
+
+function makeFSM(side) {
+  return {
+    side,
+    // Smoothed position
+    sx: -1, sy: -1,       // screen-space (canvas pixels, mirrored)
+    rx: -1, ry: -1,       // raw MP normalized
+    // State
+    state: 'IDLE',        // IDLE | EXTEND | RETURN
+    startX: -1, startY: -1,
+    peakDist: 0,
+    peakRX: -1, peakRY: -1, // raw MP coords at peak (for direction)
+    startRX: -1, startRY: -1,
+    coolUntil: 0,
+    // For UI bars
+    dispX: 0, dispY: 0,
+  };
+}
+
+const FSM = { L: makeFSM('L'), R: makeFSM('R') };
+
+// Thresholds (normalized MP units, 0-1)
+const DISP_TRIGGER  = 0.055; // displacement from start to enter EXTEND
+const DISP_RETURN   = 0.040; // return within this to go back to IDLE
+const PEAK_RETURN   = 0.50;  // must drop to <50% of peak to fire punch
+const COOLDOWN_MS   = 350;
+
+// Classify punch from displacement vector (raw MP coords, unmirrored)
+// See detailed coordinate explanation in comments
+function classify(side, dx, dy) {
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  if (side === 'L') {
+    // UPPER: dominant upward (dy < 0 = up in MP)
+    if (dy < 0 && ay > ax * 1.3)  return 'LU';
+    // JAB: inward horizontal (dx < 0 = left in raw = toward center for left hand)
+    if (dx < 0 && ax > ay * 1.3)  return 'LJ';
+    // HOOK: lateral sweep — left hand sweeps left→right from user POV
+    //        = in raw MP frame wrist moves right (dx > 0) or mixed
+    if (dx > 0 && ax > ay * 0.8)  return 'LH';
+    // Mixed: default to jab if going inward
+    if (dx < 0)                    return 'LJ';
+    return 'LH';
+  } else {
+    // UPPER: dominant upward
+    if (dy < 0 && ay > ax * 1.3)  return 'RU';
+    // CROSS: inward horizontal (dx > 0 = right in raw = toward center for right hand)
+    if (dx > 0 && ax > ay * 1.3)  return 'RC';
+    // HOOK: right hand sweeps right→left = dx < 0 in raw
+    if (dx < 0 && ax > ay * 0.8)  return 'RH';
+    if (dx > 0)                    return 'RC';
+    return 'RH';
+  }
+}
+
+function updateFSM(fsm, rawX, rawY, screenX, screenY, now) {
+  // EMA smoothing
+  if (fsm.rx < 0) { fsm.rx=rawX; fsm.ry=rawY; fsm.sx=screenX; fsm.sy=screenY; }
+  fsm.rx += (rawX - fsm.rx) * EMA_ALPHA;
+  fsm.ry += (rawY - fsm.ry) * EMA_ALPHA;
+  fsm.sx += (screenX - fsm.sx) * EMA_ALPHA;
+  fsm.sy += (screenY - fsm.sy) * EMA_ALPHA;
+
+  if (now < fsm.coolUntil) return;
+
+  switch (fsm.state) {
+    case 'IDLE': {
+      if (fsm.startX < 0) { fsm.startX=fsm.sx; fsm.startY=fsm.sy; fsm.startRX=fsm.rx; fsm.startRY=fsm.ry; }
+      const dx = fsm.rx - fsm.startRX;
+      const dy = fsm.ry - fsm.startRY;
+      const d  = Math.sqrt(dx*dx + dy*dy);
+      if (d > DISP_TRIGGER) {
+        fsm.state = 'EXTEND';
+        fsm.peakDist = d;
+        fsm.peakRX = fsm.rx; fsm.peakRY = fsm.ry;
+      }
+      fsm.dispX = Math.abs(dx); fsm.dispY = Math.abs(dy);
+      break;
+    }
+    case 'EXTEND': {
+      const dx = fsm.rx - fsm.startRX;
+      const dy = fsm.ry - fsm.startRY;
+      const d  = Math.sqrt(dx*dx + dy*dy);
+      fsm.dispX = Math.abs(dx); fsm.dispY = Math.abs(dy);
+      if (d > fsm.peakDist) {
+        fsm.peakDist = d;
+        fsm.peakRX = fsm.rx; fsm.peakRY = fsm.ry;
+      }
+      // Detect return — hand pulled back past 50% of peak
+      if (d < fsm.peakDist * PEAK_RETURN && fsm.peakDist > DISP_TRIGGER) {
+        const pdx = fsm.peakRX - fsm.startRX;
+        const pdy = fsm.peakRY - fsm.startRY;
+        const punch = classify(fsm.side, pdx, pdy);
+        if (punch) {
+          // Hit test: check if wrist was near any target at peak
+          // screenX/Y at peak ≈ current screen pos (close enough)
+          checkTargetHit(fsm.sx, fsm.sy, punch);
+          registerPunch(punch, true);
+          fsm.coolUntil = now + COOLDOWN_MS;
+        }
+        fsm.state = 'RETURN';
+      }
+      break;
+    }
+    case 'RETURN': {
+      const dx = fsm.rx - fsm.startRX;
+      const dy = fsm.ry - fsm.startRY;
+      const d  = Math.sqrt(dx*dx + dy*dy);
+      fsm.dispX = Math.abs(dx); fsm.dispY = Math.abs(dy);
+      if (d < DISP_RETURN) {
+        fsm.state = 'IDLE';
+        fsm.startX=fsm.sx; fsm.startY=fsm.sy;
+        fsm.startRX=fsm.rx; fsm.startRY=fsm.ry;
+        fsm.peakDist=0;
+        fsm.dispX=0; fsm.dispY=0;
+      }
+      break;
+    }
+  }
+
+  // Update sidebar bars and state indicator
+  const p = fsm.side === 'L' ? 'lh' : 'rh';
+  const scale = 240;
+  $(p+'-vx').style.width = Math.min(100, fsm.dispX*scale)+'%';
+  $(p+'-vy').style.width = Math.min(100, fsm.dispY*scale)+'%';
+  const dot = $(p+'-dot');
+  const lbl = $(p+'-label');
+  dot.className = 'state-dot' + (fsm.state==='EXTEND'?' extend':fsm.state==='RETURN'?' return':'');
+  lbl.textContent = fsm.state;
+  lbl.style.color = fsm.state==='EXTEND'?'#00ff88':fsm.state==='RETURN'?'#fbbf24':'#1e1e1e';
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MEDIAPIPE INIT
+// ══════════════════════════════════════════════════════════════════
+async function initTracking() {
+  setCT('Requesting camera…','#444');
+  $('cretry').style.display='none';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:false
+    });
+    video.srcObject = stream;
+    await new Promise(r=>{video.onloadedmetadata=r;});
+    video.play();
+    canvas.width  = video.videoWidth  || 1280;
+    canvas.height = video.videoHeight || 720;
+
+    setCT('Loading AI hand model…','#444');
+    dbg('Loading MediaPipe Hands…');
+
+    const hands = new Hands({
+      locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+    });
+    hands.setOptions({
+      maxNumHands:2,
+      modelComplexity:1,
+      minDetectionConfidence:0.70,
+      minTrackingConfidence:0.60,
+    });
+    hands.onResults(onResults);
+
+    const cam = new Camera(video,{
+      onFrame: async()=>{await hands.send({image:video});},
+      width:640,height:480,
+    });
+    await cam.start();
+    setCT('✓ Hand tracking ready — step back so both hands are visible','#00ff88');
+    dbg('📷 MEDIAPIPE ACTIVE · Targets will appear when round starts');
+  } catch(e) {
+    setCT('Camera denied — use keys 1–6','#ff4444');
+    $('cretry').style.display='block';
+    dbg('⌨ KEYBOARD · 1=L.JAB 2=R.CROSS 3=L.HOOK 4=R.HOOK 5=L.UPP 6=R.UPP');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MEDIAPIPE RESULTS CALLBACK
+// ══════════════════════════════════════════════════════════════════
+// Hand skeleton connections
+const CONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+
+const seen = {L:false, R:false};
+
+function onResults(res) {
+  const W=canvas.width, H=canvas.height;
+  const now=Date.now();
+
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  // Mirror to match flipped video
+  ctx.translate(W,0); ctx.scale(-1,1);
+
+  seen.L=false; seen.R=false;
+
+  if (res.multiHandLandmarks && res.multiHandLandmarks.length) {
+    res.multiHandLandmarks.forEach((lms,i)=>{
+      // MP labels: "Left"=user's RIGHT hand, "Right"=user's LEFT hand (mirrored)
+      const mpLabel = res.multiHandedness[i].label;
+      const side    = mpLabel==='Left'?'R':'L';
+      seen[side]    = true;
+      const col     = side==='L'?'#00ff88':'#00d4ff';
+
+      // Draw skeleton
+      drawSkeleton(lms, col, W, H);
+
+      // Feed wrist into FSM
+      // Raw MP x,y normalized (0-1), unmirrored
+      const rawX = lms[0].x, rawY = lms[0].y;
+      // Screen space: mirrored, scaled to canvas
+      const scrX = (1-rawX)*W, scrY = rawY*H;
+
+      updateFSM(FSM[side], rawX, rawY, scrX, scrY, now);
+    });
+  }
+
+  // Reset FSMs for hands not detected this frame
+  if (!seen.L) { FSM.L.state='IDLE'; FSM.L.startX=-1; FSM.L.rx=-1; }
+  if (!seen.R) { FSM.R.state='IDLE'; FSM.R.startX=-1; FSM.R.rx=-1; }
+
+  ctx.restore();
+
+  // Draw targets (in normal, non-mirrored space)
+  drawTargets(now, W, H);
+}
+
+function drawSkeleton(lms, col, W, H) {
+  ctx.strokeStyle = col+'55';
+  ctx.lineWidth   = 2;
+  for (const [a,b] of CONN) {
+    ctx.beginPath();
+    ctx.moveTo(lms[a].x*W, lms[a].y*H);
+    ctx.lineTo(lms[b].x*W, lms[b].y*H);
+    ctx.stroke();
+  }
+  // Fingertips
+  [4,8,12,16,20].forEach(i=>{
+    ctx.beginPath();
+    ctx.arc(lms[i].x*W, lms[i].y*H, 4, 0, Math.PI*2);
+    ctx.fillStyle=col;
+    ctx.fill();
+  });
+  // Wrist
+  ctx.beginPath();
+  ctx.arc(lms[0].x*W, lms[0].y*H, 8, 0, Math.PI*2);
+  ctx.fillStyle=col+'35';
+  ctx.fill();
+  ctx.strokeStyle=col+'aa';
+  ctx.lineWidth=2;
+  ctx.stroke();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ROUND BUTTONS
+// ══════════════════════════════════════════════════════════════════
+const rw=$('rbtns');
+[1,2,3,4,5,6].forEach(n=>{
+  const b=document.createElement('button');
+  b.className='rbtn'+(n===3?' on':'');
+  b.textContent=n;
+  b.onclick=()=>{G.totalRounds=n;rw.querySelectorAll('.rbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');};
+  rw.appendChild(b);
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════
+function $(id){return document.getElementById(id);}
+const fmt=s=>Math.floor(s/60)+':'+(''+(s%60)).padStart(2,'0');
+const rndEl=arr=>arr[Math.floor(Math.random()*arr.length)];
+function setCT(t,c){const e=$('ctext');e.textContent=t;e.style.color=c||'#444';}
+function dbg(t){$('dbg').textContent=t;}
+
+function showScreen(id){
+  ['menu','rest','done'].forEach(s=>$(s+'-screen').classList.add('h'));
+  $('ui').classList.remove('active');
+  if(id==='fight'){
+    $('ui').classList.add('active');
+    $('dbg').style.display='block';
+    $('acc-badge').style.display='block';
+    $('callout-dom').style.display='block';
+  }else{
+    $(id+'-screen').classList.remove('h');
+    $('dbg').style.display='none';
+    $('acc-badge').style.display='none';
+    $('callout-dom').style.display='none';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  FLASH + COMBO ANNOUNCE
+// ══════════════════════════════════════════════════════════════════
+function flashPunch(key){
+  const p=PT[key];
+  const el=$('flash');
+  el.textContent=p.sym+'  '+p.label;
+  el.style.color=p.color;
+  el.style.textShadow=`0 0 30px ${p.color}`;
+  el.classList.remove('pop');void el.offsetWidth;el.classList.add('pop');
+}
+function announceCombo(name){
+  const el=$('ca');
+  el.textContent=name.toUpperCase()+'!';
+  el.classList.remove('pop');void el.offsetWidth;el.classList.add('pop');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  AI CALLOUT
+// ══════════════════════════════════════════════════════════════════
+function showCallout(msg){
+  const el=$('callout-dom');
+  el.textContent='🤖 '+msg;
+  el.style.opacity='1';
+  clearTimeout(G.calloutTO);
+  G.calloutTO=setTimeout(()=>{el.style.opacity='0';},2400);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PUNCH REGISTRATION
+// ══════════════════════════════════════════════════════════════════
+function registerPunch(key,fromCam=false){
+  if(G.phase!=='fighting') return;
+  const p=PT[key]; if(!p) return;
+
+  flashPunch(key);
+  G.stats.total++;
+  G.stats[p.stat]++;
+  G.punchLog.push(key);
+  G.trail.push(key);
+  if(G.trail.length>4) G.trail=G.trail.slice(-4);
+
+  // Update hand last-chip
+  const side=p.hand==='L'?'lh':'rh';
+  $(side+'-last').innerHTML=`<span style="display:inline-block;border-radius:3px;padding:2px 6px;
+    font-size:9px;font-weight:700;background:${p.color}14;border:1px solid ${p.color};
+    color:${p.color};letter-spacing:1px">${p.label}</span>`;
+
+  updateStats();
+  checkCombos();
+  dbg(`${fromCam?'📷':'⌨'} ${p.label} · hits:${G.stats.hits} miss:${G.stats.misses} total:${G.stats.total}`);
+}
+
+function checkCombos(){
+  const recent=G.punchLog.slice(-4);
+  for(const c of COMBOS){
+    if(c.keys.length<=recent.length){
+      const tail=recent.slice(-c.keys.length);
+      if(JSON.stringify(tail)===JSON.stringify(c.keys)){
+        G.stats.combos++;
+        $('s-combos').textContent=G.stats.combos;
+        announceCombo(c.name);
+        break;
+      }
+    }
+  }
+}
+
+function updateStats(){
+  ['lj','rc','lh','rh','lu','ru'].forEach(k=>{
+    const el=$('s-'+k);
+    el.textContent=G.stats[k];
+    el.className='sval'+(G.stats[k]>0?' hot':'');
+  });
+  $('total').textContent=G.stats.total;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  TIMER
+// ══════════════════════════════════════════════════════════════════
+function startTimer(){
+  clearInterval(G.timerInt);
+  G.timerInt=setInterval(()=>{
+    G.timeLeft--;
+    const el=$('timer');
+    el.textContent=fmt(G.timeLeft);
+    el.classList.toggle('warn',G.timeLeft<=30);
+    $('prog-fill').style.width=(G.timeLeft/180*100)+'%';
+    $('prog-fill').style.background=G.timeLeft<=30?'#ff4444':'#00ff88';
+    if(G.timeLeft<=0){clearInterval(G.timerInt);endRound();}
+  },1000);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  FIGHT FLOW
+// ══════════════════════════════════════════════════════════════════
+function startFight(){G.round=1;G.roundHistory=[];beginRound();}
+
+function beginRound(){
+  G.phase='fighting';G.timeLeft=180;
+  G.stats={lj:0,rc:0,lh:0,rh:0,lu:0,ru:0,total:0,combos:0,hits:0,misses:0};
+  G.punchLog=[];G.trail=[];
+  targets=[];
+  FSM.L=makeFSM('L');FSM.R=makeFSM('R');
+
+  $('rnd-badge').textContent='RND '+G.round+'/'+G.totalRounds;
+  $('timer').textContent='3:00';$('timer').classList.remove('warn');
+  $('prog-fill').style.width='100%';$('prog-fill').style.background='#00ff88';
+  $('lh-last').innerHTML='';$('rh-last').innerHTML='';
+  $('lh-dot').className='state-dot';$('rh-dot').className='state-dot';
+  $('lh-label').textContent='IDLE';$('rh-label').textContent='IDLE';
+  updateStats();updateAccuracy();
+
+  showScreen('fight');
+  startTimer();
+  // Delay first target spawn slightly
+  G.targetTO=setTimeout(scheduleTargets,1500);
+  showCallout('Round '+G.round+' — Hit the targets!');
+  dbg('📷 Round '+G.round+' · Targets spawning…');
+}
+
+function endRound(){
+  clearTimeout(G.targetTO);
+  targets=[];
+  G.roundHistory.push({round:G.round,stats:{...G.stats}});
+  G.phase='rest';
+  if(G.round>=G.totalRounds) showDone_(); else startRest();
+}
+
+function startRest(){
+  let t=30;
+  $('rtitle').textContent='END OF ROUND '+G.round;
+  $('rnext').textContent='ROUND '+(G.round+1)+' COMING UP';
+  $('rt').textContent=t;
+  showScreen('rest');
+  G.restInt=setInterval(()=>{t--;$('rt').textContent=t;if(t<=0){clearInterval(G.restInt);nextRound();}},1000);
+}
+function skipRest(){clearInterval(G.restInt);nextRound();}
+function nextRound(){G.round++;beginRound();}
+
+function showDone_(){
+  const grand={total:0,combos:0,hits:0,misses:0};
+  G.roundHistory.forEach(r=>{
+    grand.total+=r.stats.total;grand.combos+=r.stats.combos;
+    grand.hits+=r.stats.hits;grand.misses+=r.stats.misses;
+  });
+  const acc=grand.hits+grand.misses>0?Math.round(grand.hits/(grand.hits+grand.misses)*100):0;
+  $('dstats').innerHTML=
+    `<div class="dsbox"><div class="dsn green">${grand.total}</div><div class="dsl">PUNCHES</div></div>`+
+    `<div class="dsbox"><div class="dsn" style="color:#fbbf24">${acc}%</div><div class="dsl">ACCURACY</div></div>`+
+    `<div class="dsbox"><div class="dsn" style="color:#a855f7">${grand.combos}</div><div class="dsl">COMBOS</div></div>`;
+  $('drounds').innerHTML=G.roundHistory.map(r=>{
+    const a=r.stats.hits+r.stats.misses>0?Math.round(r.stats.hits/(r.stats.hits+r.stats.misses)*100):0;
+    return`<div class="rpill"><div class="rpn">RND ${r.round}</div>
+      <div class="rpv">${r.stats.total}</div>
+      <div style="font-size:8px;color:#333;letter-spacing:1px">${a}% ACC</div></div>`;
+  }).join('');
+  showScreen('done');
+}
+
+function backMenu(){
+  clearInterval(G.timerInt);clearTimeout(G.targetTO);
+  targets=[];G.phase='menu';showScreen('menu');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  KEYBOARD FALLBACK (1-6)
+// ══════════════════════════════════════════════════════════════════
+const KMAP={'1':'LJ','2':'RC','3':'LH','4':'RH','5':'LU','6':'RU'};
+document.addEventListener('keydown',e=>{
+  if(G.phase!=='fighting') return;
+  const p=KMAP[e.key];
+  if(p){
+    e.preventDefault();
+    // Also try target hit at center screen for keyboard
+    checkTargetHit(canvas.width/2, canvas.height/2, p);
+    registerPunch(p,false);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  BOOT
+// ══════════════════════════════════════════════════════════════════
+showScreen('menu');
+$('acc-badge').style.display='none';
+$('callout-dom').style.display='none';
+$('dbg').textContent='Connecting to camera…';
+initTracking();
+</script>
+</body>
+</html>
