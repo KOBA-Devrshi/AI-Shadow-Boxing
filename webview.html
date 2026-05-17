@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Shadow Boxing</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;font-family:'Courier New',monospace;color:#e0e0e0;height:100vh;overflow:hidden;user-select:none}
+
+/* ── CAMERA LAYER ── */
+#cam-bg{position:fixed;inset:0;z-index:0}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.55}
+#pose-canvas{position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1)}
+
+/* ── SCANLINE OVERLAY ── */
+#scanlines{position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.18) 2px,rgba(0,0,0,.18) 4px)}
+
+/* ── VIGNETTE ── */
+#vignette{position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 40%,rgba(0,0,0,.85) 100%)}
+
+/* ── UI LAYER ── */
+#ui{position:fixed;inset:0;z-index:10;display:grid;grid-template-rows:64px 1fr 6px}
+
+/* HEADER */
+.hdr{display:flex;justify-content:space-between;align-items:center;padding:0 28px;
+  background:rgba(0,0,0,.7);backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.08)}
+.logo{display:flex;align-items:center;gap:12px}
+.logo-text{font-size:11px;letter-spacing:6px;color:#00ff88}
+.rnd-badge{background:#00ff8820;border:1px solid #00ff88;border-radius:3px;padding:3px 10px;font-size:11px;color:#00ff88;letter-spacing:3px}
+.timer-big{font-size:48px;font-weight:900;letter-spacing:4px;font-variant-numeric:tabular-nums;transition:color .3s,text-shadow .3s}
+.punch-count{text-align:right}
+.punch-num{font-size:26px;font-weight:900;color:#00ff88}
+.punch-lbl{font-size:9px;color:#444;letter-spacing:3px;margin-top:-2px}
+
+/* MAIN AREA */
+.main{display:grid;grid-template-columns:190px 1fr 190px;position:relative}
+
+/* SIDEBARS */
+.sidebar{padding:18px 14px;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);display:flex;flex-direction:column;gap:10px}
+.sb-title{font-size:9px;color:#333;letter-spacing:4px;margin-bottom:4px}
+.stat-row{display:flex;justify-content:space-between;align-items:center}
+.stat-lbl{font-size:11px;color:#555;letter-spacing:1px}
+.stat-val{font-size:20px;font-weight:700;color:#ccc}
+.divider{border-top:1px solid #1a1a1a;margin:6px 0}
+.combos-num{font-size:34px;font-weight:900;color:#a855f7;text-shadow:0 0 20px #a855f7}
+.ctrl-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+.ctrl-item{display:flex;align-items:center;gap:7px}
+.key-box{width:28px;height:28px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.key-name{font-size:10px;color:#555;letter-spacing:.5px}
+.combo-ref{font-size:10px;color:#333;line-height:2.2}
+
+/* CENTER HUD */
+.center-hud{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:0;padding-top:16px}
+
+/* AI Callout banner */
+.callout-bar{background:rgba(0,255,136,.12);border:1px solid #00ff8866;border-radius:4px;
+  padding:7px 20px;font-size:12px;color:#00ff88;letter-spacing:2px;
+  transition:opacity .4s;backdrop-filter:blur(4px)}
+
+/* AI TARGET */
+.target-box{background:rgba(255,68,68,.1);border:2px solid #ff4444;border-radius:6px;
+  padding:14px 22px;text-align:center;backdrop-filter:blur(4px);margin-top:12px}
+.target-lbl{font-size:9px;color:#ff4444;letter-spacing:4px;margin-bottom:10px}
+.target-punches{display:flex;gap:8px;align-items:center;justify-content:center}
+.punch-chip{border-radius:4px;padding:7px 14px;font-size:18px;font-weight:900}
+.arrow-sep{color:#333;font-size:14px}
+
+/* Combo trail */
+.trail-bar{display:flex;gap:7px;align-items:center;margin-top:12px;min-height:34px}
+.trail-chip{border:1px solid #333;border-radius:3px;padding:4px 10px;font-size:13px;font-weight:700}
+
+/* FLASH */
+#flash{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  font-size:110px;pointer-events:none;z-index:50;opacity:0}
+#flash.pop{animation:pop .4s ease-out forwards}
+@keyframes pop{0%{opacity:.9;transform:translate(-50%,-50%) scale(1.3)}100%{opacity:0;transform:translate(-50%,-50%) scale(.7)}}
+
+/* COMBO ANNOUNCE */
+#combo-announce{position:fixed;top:25%;left:50%;transform:translateX(-50%);
+  font-size:44px;font-weight:900;color:#fbbf24;text-shadow:0 0 30px #fbbf24;
+  z-index:60;letter-spacing:5px;opacity:0;pointer-events:none;white-space:nowrap}
+#combo-announce.pop{animation:pop 1.4s ease-out forwards}
+
+/* PROGRESS */
+.progress{background:#111}
+.prog-fill{height:100%;transition:width 1s linear,background .3s}
+
+/* ── SCREENS ── */
+.screen{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;background:rgba(0,0,0,.92);backdrop-filter:blur(12px)}
+.screen.hidden{display:none}
+.tag{font-size:10px;color:#444;letter-spacing:6px}
+.big-title{font-size:60px;font-weight:900;letter-spacing:6px;line-height:1}
+.green{color:#00ff88;text-shadow:0 0 40px #00ff88}
+.blue{color:#00d4ff;text-shadow:0 0 30px #00d4ff}
+.amber{color:#fbbf24;text-shadow:0 0 30px #fbbf24}
+.btn{padding:16px 52px;font-size:13px;font-weight:900;letter-spacing:6px;background:transparent;border:2px solid #00ff88;color:#00ff88;cursor:pointer;border-radius:4px;font-family:'Courier New',monospace;transition:all .2s}
+.btn:hover{background:#00ff8822;box-shadow:0 0 30px #00ff8844}
+.btn-ghost{border-color:#333;color:#555;border-width:1px;padding:10px 32px;font-size:11px}
+.round-sel{display:flex;align-items:center;gap:16px}
+.round-btn{width:42px;height:42px;border:2px solid #222;background:transparent;color:#444;font-size:14px;font-weight:700;cursor:pointer;border-radius:4px;font-family:'Courier New',monospace;transition:all .2s}
+.round-btn.on{border-color:#00ff88;background:#00ff8820;color:#00ff88}
+.controls-hint{color:#444;font-size:11px;letter-spacing:2px;text-align:center;line-height:2.6}
+.cam-status{font-size:11px;letter-spacing:2px;padding:6px 16px;border-radius:3px}
+
+/* Camera permission box */
+.cam-box{border:1px solid #1a1a1a;border-radius:6px;padding:20px 32px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
+.cam-icon{font-size:40px}
+
+/* Done screen */
+.stats-row{display:flex;gap:40px}
+.stat-big-box{text-align:center}
+.stat-big-num{font-size:50px;font-weight:900}
+.stat-big-lbl{font-size:9px;color:#444;letter-spacing:3px;margin-top:2px}
+.round-pills{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.r-pill{background:#111;border:1px solid #1e1e1e;border-radius:4px;padding:10px 18px;text-align:center;min-width:70px}
+.r-pill-n{font-size:9px;color:#444;letter-spacing:2px;margin-bottom:4px}
+.r-pill-v{font-size:22px;font-weight:700;color:#fff}
+
+/* Pose indicator */
+#pose-indicator{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:20;
+  font-size:10px;color:#333;letter-spacing:3px;background:rgba(0,0,0,.5);
+  padding:4px 12px;border-radius:10px;pointer-events:none}
+
+/* Motion detection bar */
+#motion-bar{position:fixed;right:200px;top:80px;z-index:20;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+.motion-label{font-size:9px;color:#333;letter-spacing:3px}
+.motion-track{width:80px;height:4px;background:#111;border-radius:2px}
+.motion-fill{height:100%;background:#00ff88;border-radius:2px;transition:width .1s}
+</style>
+</head>
+<body>
+
+<!-- ── CAMERA LAYER ── -->
+<div id="cam-bg">
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="pose-canvas"></canvas>
+</div>
+<div id="scanlines"></div>
+<div id="vignette"></div>
+
+<!-- ── GAME UI ── -->
+<div id="ui" class="hidden">
+  <!-- Header -->
+  <div class="hdr">
+    <div class="logo">
+      <span class="logo-text">AI SHADOW BOXING</span>
+      <span id="rnd-badge" class="rnd-badge">RND 1/3</span>
+    </div>
+    <div id="timer" class="timer-big">3:00</div>
+    <div class="punch-count">
+      <div id="total-punches" class="punch-num">0</div>
+      <div class="punch-lbl">PUNCHES</div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- LEFT -->
+    <div class="sidebar">
+      <div class="sb-title">THIS ROUND</div>
+      <div class="stat-row"><span class="stat-lbl">JAB &nbsp;J</span><span id="s-j" class="stat-val">0</span></div>
+      <div class="stat-row"><span class="stat-lbl">CROSS C</span><span id="s-c" class="stat-val">0</span></div>
+      <div class="stat-row"><span class="stat-lbl">HOOK H</span><span id="s-h" class="stat-val">0</span></div>
+      <div class="stat-row"><span class="stat-lbl">UPPER U</span><span id="s-u" class="stat-val">0</span></div>
+      <div class="stat-row"><span class="stat-lbl">BLOCK B</span><span id="s-b" class="stat-val">0</span></div>
+      <div class="stat-row"><span class="stat-lbl">SLIP &nbsp;S</span><span id="s-s" class="stat-val">0</span></div>
+      <div class="divider"></div>
+      <div class="sb-title">COMBOS</div>
+      <div id="s-combos" class="combos-num">0</div>
+
+      <!-- Motion meter -->
+      <div class="divider"></div>
+      <div class="sb-title">MOTION</div>
+      <div style="width:100%;height:6px;background:#111;border-radius:3px;margin-top:2px">
+        <div id="motion-fill" style="height:100%;background:#00ff88;border-radius:3px;width:0%;transition:width .1s"></div>
+      </div>
+      <div id="motion-auto" style="font-size:9px;color:#333;letter-spacing:2px;margin-top:4px">CAMERA PUNCH DETECT</div>
+    </div>
+
+    <!-- CENTER HUD -->
+    <div class="center-hud">
+      <div id="callout" class="callout-bar" style="opacity:0">🤖 Ready</div>
+      <div id="target-box" class="target-box" style="display:none">
+        <div class="target-lbl">⚡ THROW THIS COMBO</div>
+        <div id="target-punches" class="target-punches"></div>
+      </div>
+      <div id="trail" class="trail-bar"></div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="sidebar" style="border-left:1px solid rgba(255,255,255,.06);border-right:none">
+      <div class="sb-title">KEYBOARD</div>
+      <div class="ctrl-grid">
+        <div class="ctrl-item"><div class="key-box" style="border:1.5px solid #00ff88;color:#00ff88">J</div><div class="key-name">JAB</div></div>
+        <div class="ctrl-item"><div class="key-box" style="border:1.5px solid #00d4ff;color:#00d4ff">C</div><div class="key-name">CROSS</div></div>
+        <div class="ctrl-item"><div class="key-box" style="border:1.5px solid #ff6b35;color:#ff6b35">H</div><div class="key-name">HOOK</div></div>
+        <div class="ctrl-item"><div class="key-box" style="border:1.5px solid #a855f7;color:#a855f7">U</div><div class="key-name">UPPER</div></div>
+        <div class="ctrl-item"><div class="key-box" style="border:1.5px solid #fbbf24;color:#fbbf24">B</div><div class="key-name">BLOCK</div></div>
+        <div class="ctrl-item"><div class="key-box" style="border:1.5px solid #6ee7b7;color:#6ee7b7">S</div><div class="key-name">SLIP</div></div>
+      </div>
+      <div class="divider"></div>
+      <div class="sb-title">COMBOS</div>
+      <div class="combo-ref">
+        1-2 &nbsp;→ J C<br>
+        1-2-3 → J C H<br>
+        2-3 &nbsp;→ C H<br>
+        6-3 &nbsp;→ U H<br>
+        1-2-6 → J C U
+      </div>
+      <div class="divider"></div>
+      <div class="sb-title" style="color:#00d4ff55">CAMERA</div>
+      <div style="font-size:9px;color:#333;letter-spacing:1px;line-height:2">
+        Fast arm → JAB<br>
+        Wide swing → HOOK<br>
+        Body dip → SLIP<br>
+        Arms cross → BLOCK
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress">
+    <div id="prog-fill" class="prog-fill" style="width:100%;background:#00ff88"></div>
+  </div>
+</div>
+
+<!-- Flash & announce -->
+<div id="flash"></div>
+<div id="combo-announce"></div>
+<div id="pose-indicator">📷 CAMERA ACTIVE</div>
+
+<!-- ═══════════════ SCREENS ═══════════════ -->
+
+<!-- MENU -->
+<div id="menu-screen" class="screen">
+  <div style="text-align:center">
+    <div class="tag" style="margin-bottom:14px">AI-POWERED · CAMERA VISION</div>
+    <div class="big-title">SHADOW</div>
+    <div class="big-title green">BOXING</div>
+  </div>
+
+  <div id="cam-status-box" class="cam-box">
+    <div class="cam-icon">📷</div>
+    <div id="cam-status-text" class="cam-status" style="color:#666">Requesting camera access...</div>
+    <button id="cam-retry-btn" class="btn btn-ghost" style="display:none" onclick="initCamera()">RETRY CAMERA</button>
+  </div>
+
+  <div class="controls-hint">
+    J = JAB &nbsp;·&nbsp; C = CROSS &nbsp;·&nbsp; H = HOOK &nbsp;·&nbsp; U = UPPER<br>
+    B = BLOCK &nbsp;·&nbsp; S = SLIP &nbsp;·&nbsp; Camera auto-detects punches
+  </div>
+
+  <div class="round-sel">
+    <div class="tag">ROUNDS:</div>
+    <div id="round-btns" style="display:flex;gap:8px"></div>
+  </div>
+
+  <button class="btn" onclick="startFight()">FIGHT</button>
+</div>
+
+<!-- REST -->
+<div id="rest-screen" class="screen hidden">
+  <div class="tag" id="rest-title">END OF ROUND 1</div>
+  <div class="big-title blue">REST</div>
+  <div id="rest-timer" style="font-size:60px;font-weight:900;color:#fff">30</div>
+  <div class="tag" id="rest-next">ROUND 2 COMING UP</div>
+  <button class="btn btn-ghost" onclick="skipRest()">SKIP REST</button>
+</div>
+
+<!-- DONE -->
+<div id="done-screen" class="screen hidden">
+  <div class="tag">WORKOUT COMPLETE</div>
+  <div class="big-title amber">GG!</div>
+  <div class="stats-row" id="done-stats"></div>
+  <div id="done-rounds" class="round-pills"></div>
+  <button class="btn" onclick="backToMenu()">AGAIN</button>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+//  CONSTANTS
+// ══════════════════════════════════════════════════════
+const COMBOS_DEF=[
+  {name:'Jab Cross',keys:['J','C']},
+  {name:'Jab Jab Cross',keys:['J','J','C']},
+  {name:'Cross Hook',keys:['C','H']},
+  {name:'Jab Cross Hook',keys:['J','C','H']},
+  {name:'Uppercut Hook',keys:['U','H']},
+  {name:'Jab Cross Upper',keys:['J','C','U']},
+  {name:'Full Combo',keys:['J','C','H','U']},
+];
+const CALLOUTS=['Keep your guard up!','Faster combinations!','Stay light on your feet!','Nice combo! Keep it up!','More power in that cross!','Don\'t drop your hands!','Work the body!','Head movement!','Set up with the jab!','Breathe! Stay relaxed!','Dig that hook!','Snap those punches!','Camera sees you!','Show the camera those combos!'];
+const COLORS={J:'#00ff88',C:'#00d4ff',H:'#ff6b35',U:'#a855f7',B:'#fbbf24',S:'#6ee7b7'};
+const SYMBOLS={J:'→',C:'⟶',H:'↺',U:'↑',B:'⛉',S:'↗'};
+
+// ══════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════
+let G={
+  phase:'menu',round:1,totalRounds:3,timeLeft:180,
+  stats:{j:0,c:0,h:0,u:0,b:0,s:0,total:0,combos:0},
+  roundHistory:[],punchLog:[],trail:[],
+  timerInt:null,targetTO:null,calloutTO:null,comboResetTO:null,restInt:null,
+  cameraReady:false,stream:null,
+};
+
+// ══════════════════════════════════════════════════════
+//  CAMERA + MOTION DETECTION
+// ══════════════════════════════════════════════════════
+const video=document.getElementById('video');
+const poseCanvas=document.getElementById('pose-canvas');
+const poseCtx=poseCanvas.getContext('2d');
+
+let prevFrame=null;
+let motionHistory=[];
+let lastPunchTime=0;
+let punchCooldown=400; // ms between camera-detected punches
+let motionFrameId=null;
+
+async function initCamera(){
+  const statusText=document.getElementById('cam-status-text');
+  const retryBtn=document.getElementById('cam-retry-btn');
+  statusText.textContent='Requesting camera...';
+  statusText.style.color='#666';
+  retryBtn.style.display='none';
+
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},
+      audio:false
+    });
+    video.srcObject=stream;
+    G.stream=stream;
+    await new Promise(r=>video.onloadedmetadata=r);
+    video.play();
+
+    poseCanvas.width=video.videoWidth||1280;
+    poseCanvas.height=video.videoHeight||720;
+
+    G.cameraReady=true;
+    statusText.textContent='✓ Camera active — camera punches enabled';
+    statusText.style.color='#00ff88';
+
+    startMotionDetection();
+  }catch(e){
+    G.cameraReady=false;
+    statusText.textContent='Camera denied — keyboard controls only';
+    statusText.style.color='#ff4444';
+    retryBtn.style.display='block';
+    console.warn('Camera error:',e);
+  }
+}
+
+function startMotionDetection(){
+  const offscreen=document.createElement('canvas');
+  offscreen.width=160;offscreen.height=90;
+  const octx=offscreen.getContext('2d');
+
+  function detect(){
+    motionFrameId=requestAnimationFrame(detect);
+    if(G.phase!=='fighting'||video.readyState<2) return;
+
+    octx.drawImage(video,0,0,160,90);
+    const cur=octx.getImageData(0,0,160,90).data;
+
+    if(!prevFrame){prevFrame=cur.slice();return;}
+
+    // Divide frame into zones: left-arm, right-arm, center, lower
+    const zones={left:0,right:0,center:0,lower:0};
+    const W=160,H=90;
+    let totalDiff=0;
+
+    for(let y=0;y<H;y++){
+      for(let x=0;x<W;x++){
+        const i=(y*W+x)*4;
+        const diff=Math.abs(cur[i]-prevFrame[i])+Math.abs(cur[i+1]-prevFrame[i+1])+Math.abs(cur[i+2]-prevFrame[i+2]);
+        totalDiff+=diff;
+
+        // Zone mapping (mirrored because scaleX(-1) on video)
+        if(diff>30){
+          if(x<W*0.33&&y<H*0.7) zones.right+=diff; // left on screen = right punch (mirrored)
+          else if(x>W*0.66&&y<H*0.7) zones.left+=diff;
+          else if(y>H*0.65) zones.lower+=diff;
+          else zones.center+=diff;
+        }
+      }
+    }
+
+    prevFrame=cur.slice();
+    const norm=totalDiff/(160*90*3*255);
+    const motionPct=Math.min(100,norm*800);
+
+    // Update motion meter
+    document.getElementById('motion-fill').style.width=motionPct+'%';
+    document.getElementById('motion-fill').style.background=motionPct>60?'#ff4444':motionPct>30?'#fbbf24':'#00ff88';
+
+    // Store motion history
+    motionHistory.push({norm,zones,t:Date.now()});
+    if(motionHistory.length>8) motionHistory.shift();
+
+    // Punch detection logic
+    const now=Date.now();
+    if(now-lastPunchTime<punchCooldown) return;
+
+    // Look for motion spike (punch = fast motion then low)
+    if(motionHistory.length>=4){
+      const recent=motionHistory.slice(-4);
+      const peak=Math.max(...recent.map(m=>m.norm));
+      const last=recent[recent.length-1].norm;
+
+      if(peak>0.08&&last<peak*0.6){
+        // Classify punch type by zone
+        const peakFrame=recent.find(m=>m.norm===peak);
+        const z=peakFrame.zones;
+
+        let punchKey='J';
+        if(z.lower>z.left&&z.lower>z.right&&z.lower>z.center){
+          punchKey=Math.random()>.5?'U':'S'; // low motion = uppercut or slip
+        }else if(z.left>z.right*1.5){
+          punchKey='J'; // right arm forward = jab
+        }else if(z.right>z.left*1.5){
+          punchKey='C'; // left arm forward = cross
+        }else if(z.center>z.left&&z.center>z.right){
+          punchKey=peak>0.18?'H':'B'; // wide center = hook or block
+        }else{
+          punchKey='J';
+        }
+
+        lastPunchTime=now;
+        registerPunch(punchKey,true);
+      }
+    }
+  }
+  detect();
+}
+
+// Draw skeleton overlay
+function drawSkeleton(landmarks){
+  poseCtx.clearRect(0,0,poseCanvas.width,poseCanvas.height);
+  if(!landmarks||!landmarks.length) return;
+
+  const W=poseCanvas.width,H=poseCanvas.height;
+
+  // Key connections: shoulders, elbows, wrists
+  const connections=[[11,13],[13,15],[12,14],[14,16],[11,12]];
+  poseCtx.strokeStyle='rgba(0,255,136,0.5)';
+  poseCtx.lineWidth=2;
+
+  for(const [a,b] of connections){
+    const pa=landmarks[a],pb=landmarks[b];
+    if(!pa||!pb||pa.visibility<0.5||pb.visibility<0.5) continue;
+    poseCtx.beginPath();
+    poseCtx.moveTo(pa.x*W,pa.y*H);
+    poseCtx.lineTo(pb.x*W,pb.y*H);
+    poseCtx.stroke();
+  }
+
+  // Draw wrist dots (punch indicators)
+  [[15,'#00ff88'],[16,'#00d4ff']].forEach(([idx,col])=>{
+    const p=landmarks[idx];
+    if(p&&p.visibility>0.5){
+      poseCtx.fillStyle=col;
+      poseCtx.beginPath();
+      poseCtx.arc(p.x*W,p.y*H,8,0,Math.PI*2);
+      poseCtx.fill();
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════
+//  ROUND BUTTONS
+// ══════════════════════════════════════════════════════
+const rbWrap=document.getElementById('round-btns');
+[1,2,3,4,5,6].forEach(n=>{
+  const b=document.createElement('button');
+  b.className='round-btn'+(n===3?' on':'');
+  b.textContent=n;
+  b.onclick=()=>{
+    G.totalRounds=n;
+    rbWrap.querySelectorAll('.round-btn').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+  };
+  rbWrap.appendChild(b);
+});
+
+// ══════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════
+function fmt(s){return Math.floor(s/60)+':'+(''+(s%60)).padStart(2,'0')}
+function rnd(arr){return arr[Math.floor(Math.random()*arr.length)]}
+function $(id){return document.getElementById(id)}
+function showScreen(id){
+  ['menu-screen','rest-screen','done-screen'].forEach(s=>$(s).classList.add('hidden'));
+  $('ui').classList.add('hidden');
+  if(id==='fight'){
+    $('ui').classList.remove('hidden');
+  }else{
+    $(id+'-screen').classList.remove('hidden');
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  FLASH + ANNOUNCE
+// ══════════════════════════════════════════════════════
+function flashPunch(k,fromCamera){
+  const el=$('flash');
+  el.textContent=SYMBOLS[k]||'✊';
+  el.style.color=COLORS[k]||'#fff';
+  el.style.textShadow='0 0 50px '+(COLORS[k]||'#fff');
+  if(fromCamera){
+    el.style.fontSize='80px';
+    el.style.left='60%';
+  }else{
+    el.style.fontSize='110px';
+    el.style.left='50%';
+  }
+  el.classList.remove('pop');
+  void el.offsetWidth;
+  el.classList.add('pop');
+}
+
+function announceCombo(name){
+  const el=$('combo-announce');
+  el.textContent=name.toUpperCase()+'!';
+  el.classList.remove('pop');
+  void el.offsetWidth;
+  el.classList.add('pop');
+}
+
+// ══════════════════════════════════════════════════════
+//  CALLOUT + TARGET
+// ══════════════════════════════════════════════════════
+function showCallout(msg){
+  const el=$('callout');
+  el.textContent='🤖 '+msg;
+  el.style.opacity='1';
+  clearTimeout(G.calloutTO);
+  G.calloutTO=setTimeout(()=>{el.style.opacity='0';},2500);
+}
+
+function scheduleTarget(){
+  clearTimeout(G.targetTO);
+  const delay=2500+Math.random()*4500;
+  G.targetTO=setTimeout(()=>{
+    const keys=['J','C','H','U'];
+    const count=Math.floor(Math.random()*3)+1;
+    const combo=Array.from({length:count},()=>keys[Math.floor(Math.random()*4)]);
+    showTarget(combo);
+    showCallout(rnd(CALLOUTS));
+    G.targetTO=setTimeout(()=>{hideTarget();scheduleTarget();},3500);
+  },delay);
+}
+
+function showTarget(keys){
+  const tb=$('target-box');
+  const tp=$('target-punches');
+  tp.innerHTML=keys.map((k,i)=>{
+    const col=COLORS[k]||'#ff4444';
+    const chip=`<div class="punch-chip" style="background:${col}22;border:1.5px solid ${col};color:${col}">${k}</div>`;
+    return i<keys.length-1?chip+'<div class="arrow-sep">→</div>':chip;
+  }).join('');
+  tb.style.display='block';
+}
+function hideTarget(){$('target-box').style.display='none';}
+
+// ══════════════════════════════════════════════════════
+//  PUNCH REGISTRATION
+// ══════════════════════════════════════════════════════
+function registerPunch(k,fromCamera=false){
+  if(G.phase!=='fighting') return;
+  k=k.toUpperCase();
+  if(!COLORS[k]) return;
+
+  flashPunch(k,fromCamera);
+
+  G.stats.total++;
+  const sk=k.toLowerCase();
+  if(G.stats[sk]!==undefined) G.stats[sk]++;
+
+  G.punchLog.push(k);
+  G.trail.push(k);
+  if(G.trail.length>4) G.trail=G.trail.slice(-4);
+
+  // Render trail
+  $('trail').innerHTML=G.trail.map(t=>{
+    const col=COLORS[t]||'#888';
+    return `<div class="trail-chip" style="border-color:${col};color:${col}">${t}</div>`;
+  }).join('');
+
+  clearTimeout(G.comboResetTO);
+  G.comboResetTO=setTimeout(()=>{G.trail=[];$('trail').innerHTML='';},1600);
+
+  updateStats();
+  checkCombos();
+}
+
+function checkCombos(){
+  const recent=G.punchLog.slice(-4);
+  for(const c of COMBOS_DEF){
+    if(c.keys.length<=recent.length){
+      const tail=recent.slice(-c.keys.length);
+      if(JSON.stringify(tail)===JSON.stringify(c.keys)){
+        G.stats.combos++;
+        $('s-combos').textContent=G.stats.combos;
+        announceCombo(c.name);
+        break;
+      }
+    }
+  }
+}
+
+function updateStats(){
+  $('s-j').textContent=G.stats.j;
+  $('s-c').textContent=G.stats.c;
+  $('s-h').textContent=G.stats.h;
+  $('s-u').textContent=G.stats.u;
+  $('s-b').textContent=G.stats.b;
+  $('s-s').textContent=G.stats.s;
+  $('s-combos').textContent=G.stats.combos;
+  $('total-punches').textContent=G.stats.total;
+}
+
+// ══════════════════════════════════════════════════════
+//  TIMER
+// ══════════════════════════════════════════════════════
+function startTimer(){
+  clearInterval(G.timerInt);
+  G.timerInt=setInterval(()=>{
+    G.timeLeft--;
+    const el=$('timer');
+    el.textContent=fmt(G.timeLeft);
+    el.style.color=G.timeLeft<=30?'#ff4444':'#fff';
+    el.style.textShadow=G.timeLeft<=30?'0 0 20px #ff4444':'none';
+    const pct=(G.timeLeft/180)*100;
+    $('prog-fill').style.width=pct+'%';
+    $('prog-fill').style.background=G.timeLeft<=30?'#ff4444':'#00ff88';
+    if(G.timeLeft<=0){clearInterval(G.timerInt);endRound();}
+  },1000);
+}
+
+// ══════════════════════════════════════════════════════
+//  FIGHT FLOW
+// ══════════════════════════════════════════════════════
+function startFight(){
+  G.round=1;
+  G.roundHistory=[];
+  beginRound();
+}
+
+function beginRound(){
+  G.phase='fighting';
+  G.timeLeft=180;
+  G.stats={j:0,c:0,h:0,u:0,b:0,s:0,total:0,combos:0};
+  G.punchLog=[];
+  G.trail=[];
+  prevFrame=null;
+
+  $('rnd-badge').textContent='RND '+G.round+'/'+G.totalRounds;
+  $('timer').textContent='3:00';
+  $('timer').style.color='#fff';
+  $('prog-fill').style.width='100%';
+  updateStats();
+  $('trail').innerHTML='';
+  hideTarget();
+  showScreen('fight');
+  startTimer();
+  scheduleTarget();
+  showCallout('Round '+G.round+' — FIGHT!');
+  $('pose-indicator').style.display=G.cameraReady?'block':'none';
+}
+
+function endRound(){
+  clearTimeout(G.targetTO);
+  hideTarget();
+  G.roundHistory.push({round:G.round,stats:{...G.stats}});
+  G.phase='rest';
+  if(G.round>=G.totalRounds) showDone();
+  else startRest();
+}
+
+function startRest(){
+  let t=30;
+  $('rest-title').textContent='END OF ROUND '+G.round;
+  $('rest-next').textContent='ROUND '+(G.round+1)+' COMING UP';
+  $('rest-timer').textContent=t;
+  showScreen('rest');
+  G.restInt=setInterval(()=>{
+    t--;
+    $('rest-timer').textContent=t;
+    if(t<=0){clearInterval(G.restInt);nextRound();}
+  },1000);
+}
+
+function skipRest(){clearInterval(G.restInt);nextRound();}
+function nextRound(){G.round++;beginRound();}
+
+function showDone(){
+  const allR=G.roundHistory;
+  const grand={total:0,combos:0};
+  allR.forEach(r=>{grand.total+=r.stats.total;grand.combos+=r.stats.combos;});
+
+  $('done-stats').innerHTML=
+    `<div class="stat-big-box"><div class="stat-big-num green">${grand.total}</div><div class="stat-big-lbl">TOTAL PUNCHES</div></div>`+
+    `<div class="stat-big-box"><div class="stat-big-num" style="color:#a855f7">${grand.combos}</div><div class="stat-big-lbl">COMBOS</div></div>`+
+    `<div class="stat-big-box"><div class="stat-big-num blue">${G.totalRounds}</div><div class="stat-big-lbl">ROUNDS</div></div>`;
+
+  $('done-rounds').innerHTML=allR.map(r=>
+    `<div class="r-pill"><div class="r-pill-n">RND ${r.round}</div><div class="r-pill-v">${r.stats.total}</div></div>`
+  ).join('');
+  showScreen('done');
+}
+
+function backToMenu(){
+  clearInterval(G.timerInt);
+  clearTimeout(G.targetTO);
+  G.phase='menu';
+  showScreen('menu');
+}
+
+// ══════════════════════════════════════════════════════
+//  KEYBOARD
+// ══════════════════════════════════════════════════════
+document.addEventListener('keydown',e=>{
+  if(G.phase!=='fighting') return;
+  const k=e.key.toLowerCase();
+  if('jchuBs'.includes(k)&&e.key.length===1){
+    e.preventDefault();
+    registerPunch(k,false);
+  }
+});
+
+// ══════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════
+initCamera();
+showScreen('menu');
+$('pose-indicator').style.display='none';
+</script>
+</body>
+</html>

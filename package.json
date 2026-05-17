@@ -1,0 +1,37 @@
+{
+  "name": "ai-shadow-boxing",
+  "displayName": "AI Shadow Boxing",
+  "description": "AI-powered shadow boxing trainer in VS Code",
+  "version": "1.0.0",
+  "publisher": "your-publisher-id",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "icon": "icon.png",
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiShadowBoxing.start",
+        "title": "AI Shadow Boxing: Start Workout"
+      },
+      {
+        "command": "aiShadowBoxing.stop",
+        "title": "AI Shadow Boxing: Stop Workout"
+      }
+    ],
+    "keybindings": [
+      { "command": "aiShadowBoxing.start", "key": "ctrl+shift+b", "mac": "cmd+shift+b" }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}
